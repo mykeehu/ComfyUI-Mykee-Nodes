@@ -22,7 +22,15 @@ developers, these are specifically noted. Thank you to them!
 1. Copy this folder into `ComfyUI/custom_nodes/`, or use
    `git clone https://github.com/mykeehu/ComfyUI-Mykee-Nodes/` in `ComfyUI/custom_nodes/` folder,
    so the end result is `ComfyUI/custom_nodes/ComfyUI-Mykee-Nodes/`.
-3. Restart ComfyUI.
+2. Restart ComfyUI.
+
+To install the additional packages required for certain nodes, see the 
+requirements.txt file for more information, 
+and use the following command to install them as needed:
+
+```
+pip install -r requirements.txt
+```
 
 ## Mykee Counter 
 
