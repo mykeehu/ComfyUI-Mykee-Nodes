@@ -22,8 +22,6 @@ developers, these are specifically noted. Thank you to them!
 1. Copy this folder into `ComfyUI/custom_nodes/`, so the end result is
    `ComfyUI/custom_nodes/ComfyUI-Mykee-Nodes/`.
 2. Restart ComfyUI.
-3. The node appears under the `Mykee/Counter` category, named
-   **"Mykee Counter"**.
 
 ## Parameters
 
