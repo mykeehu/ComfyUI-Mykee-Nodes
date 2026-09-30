@@ -23,7 +23,7 @@ developers, these are specifically noted. Thank you to them!
    `ComfyUI/custom_nodes/ComfyUI-Mykee-Nodes/`.
 2. Restart ComfyUI.
 
-## Parameters
+## Mykee Counter 
 
 - **value** (INT) - the counter's current value. Can be overwritten by
   hand at any time before running (queuing) - counting then continues
@@ -37,13 +37,13 @@ developers, these are specifically noted. Thank you to them!
 - **signal_1 ... signal_50** - inputs of any type (can be connected to any
   node's output). Only the first `num_inputs` of these are active.
 
-## Outputs
+**Outputs**
 
 - **INT** - the counter's new value as an integer.
 - **FLOAT** - the same, as a float.
 - **TEXT** - the value as text, zero-padded per `padding`.
 
-## Logic
+**Logic**
 
 - The counter starts at `0` and is always a whole number (no decimals).
 - If **any** of the active `signal_N` inputs receives data (not `None`),
