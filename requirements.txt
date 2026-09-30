@@ -1,0 +1,147 @@
+# For the Mykee/Character nodes (mykee_character.py):
+opencv-python>=4.8.0
+transformers>=4.40.0
+
+# For the Mykee/Audio nodes (mykee_audio.py):
+# numpy and torch are already required by ComfyUI itself.
+# torchaudio is optional (used for proper resampling if the two input
+# tracks have different sample rates); falls back to linear interpolation
+# if not installed.
+
+# For the Mykee/Audio prosody + timbre nodes (mykee_prosody.py):
+pyworld
+# WORLD vocoder Python binding. On Windows, if PyPI has no prebuilt wheel
+# for your exact Python version, pip will try to build it from source and
+# needs the Microsoft C++ Build Tools installed.
+# (pyworld imports pkg_resources at load time, which recent setuptools
+# versions no longer ship - mykee_prosody.py works around this itself
+# with a small stdlib-based shim, so no setuptools pinning is needed.)
+
+# For the Mykee/Audio Voice/Accent Match node (mykee_voice_match.py):
+demucs
+librosa
+huggingface_hub
+munch
+einops
+pyyaml
+scipy
+soundfile
+accelerate
+# transformers is already listed above (Seed-VC pins 4.46.3; if you hit
+# API mismatches with a much newer/older version, try pinning to that).
+# The above list is Seed-VC's own core inference dependencies (from their
+# requirements-mac.txt), trimmed to what mykee_voice_match.py's code path
+# actually exercises (inference.py's load_models/main) - their repo's
+# full requirements file also lists gradio, pydub, resemblyzer, jiwer,
+# sounddevice, modelscope, funasr, hydra-core, python-dotenv, which are
+# used by their Gradio apps / real-time GUI / evaluation scripts, not by
+# the plain inference path this node calls into. If a further
+# ModuleNotFoundError shows up, it's most likely one of those - install
+# it and let me know which one so this list can be corrected.
+# Requires a CUDA GPU in practice - CPU will run but is extremely slow.
+# Also requires git on PATH (used once, on first run, to clone
+# https://github.com/Plachtaa/seed-vc into this node pack's third_party/
+# folder for its inference code - the actual model weights are downloaded
+# separately into ComfyUI/models/{whisper,Seed-VC,CAMpp,htdemucs}/, not
+# bundled with that clone).
+
+# For the Mykee/Audio "Mykee AI Voice Restore" node
+# (mykee_voice_cleanup.py):
+voicefixer
+# Pulls in its own dependencies (torchlibrosa, matplotlib, streamlit,
+# GitPython, progressbar) - streamlit is unused by the actual restoration
+# path this node calls into (voicefixer.base.VoiceFixer + its restorer/
+# vocoder submodules), it's only used by voicefixer's own CLI demo, but
+# pip installs it anyway since it's a declared dependency of the package.
+# On first actual use of that node, voicefixer downloads ~200-300MB of
+# checkpoints from Zenodo into ComfyUI/models/VoiceFixer/ (redirected
+# there by mykee_voice_cleanup.py - voicefixer's own default, absent that
+# redirect, would be ~/.cache/voicefixer/, since its checkpoint-fetching
+# code has no built-in option for this). Needs network access to
+# zenodo.org the first time only. The separate "Mykee Audio DSP Cleanup"
+# node (same file) does NOT need this package at all - only install it
+# if you actually plan to use "Mykee AI Voice Restore".
+
+# For the Mykee/Audio "Mykee Audio Dereverb" node (mykee_dereverb.py):
+nara_wpe
+# Classical (non-neural) WPE dereverberation - no model download, CPU
+# only. Lightweight dependencies of its own (bottleneck, click, tqdm) on
+# top of numpy/soundfile, which this pack already requires elsewhere.
+
+# For the Mykee/Audio "Mykee Room Reducer" node (mykee_room_reducer.py):
+resemble-enhance
+# Neural far-field-to-close-mic speech enhancement (denoiser + CFM-based
+# restoration) - reduces room coloration/early reflections that Mykee
+# Audio Dereverb's WPE deliberately leaves untouched. GPU strongly
+# recommended. On first actual use, downloads its own ~1GB checkpoint
+# via plain HTTPS from huggingface.co into the installed resemble_enhance
+# package folder itself (NOT ComfyUI/models/ - see mykee_room_reducer.py's
+# module docstring for why). Needs network access to huggingface.co the
+# first time only.
+#
+# WINDOWS: plain `pip install resemble-enhance` WILL FAIL - it pulls in
+# deepspeed==0.12.4, and pip tries to build deepspeed's async_io (AIO) op
+# from source, which needs a Linux-only libaio and always fails on
+# Windows with "LNK1181: cannot open input file 'aio.lib'". This node
+# never touches deepspeed's actual training/distributed code (only
+# resemble_enhance's train.py files import it at module level, and
+# THAT import is transitively unavoidable even for pure inference) - it
+# just needs `import deepspeed` to succeed, nothing more. Fix:
+#   1. Install a PRECOMPILED Windows deepspeed wheel instead of letting
+#      pip build one - e.g. https://github.com/6Morpheus6/deepspeed-windows-wheels
+#      (Python 3.9-3.12, no CUDA toolkit needed) - match your ComfyUI
+#      python_embeded's Python version.
+#   2. `pip install resemble-enhance --no-deps` - the --no-deps is
+#      CRITICAL: resemble-enhance's own requirements pin
+#      torch==2.1.1/torchaudio==2.1.1/torchvision==0.16.1/numpy==1.26.2/
+#      gradio==4.8.0, which WOULD DOWNGRADE ComfyUI's own working
+#      torch/CUDA stack without --no-deps.
+#   3. Manually install the handful of small, harmless deps it still
+#      needs that ComfyUI's env doesn't already provide:
+#      `pip install celluloid==0.2.0 ptflops==0.7.1.2 resampy==0.4.2 omegaconf==2.3.0 "tabulate>=0.9.0"`
+#      (NOT tabulate==0.8.10 as resemble-enhance's own pin says - a
+#      ComfyUI-provided pandas already requires tabulate>=0.9.0, and the
+#      version only affects a startup-time df.to_markdown() log line
+#      inside Enhancer.summarize(), not anything functional here.)
+#
+# WINDOWS, separately: the downloaded checkpoint's hparams.yaml was
+# saved on a Linux machine, so a couple of its (training-only, never
+# read at inference) Path-typed fields got serialized as
+# `!!python/object/apply:pathlib.PosixPath` YAML tags - which Python
+# 3.12+ refuses to even instantiate on Windows, crashing the very
+# first model load with "cannot instantiate 'PosixPath' on your
+# system". mykee_room_reducer.py already works around this itself
+# (aliases pathlib.PosixPath to WindowsPath for the duration of that
+# one parse) - nothing extra to install for this part, just noting it
+# since it's part of the same "Windows + this checkpoint" cluster of
+# issues.
+
+# For the Mykee/StyleGAN nodes (mykee_stylegan.py):
+# numpy, torch, torchvision and Pillow are already required by ComfyUI itself.
+# No extra pip packages needed - the StyleGAN2/3 runtime (dnnlib + torch_utils)
+# is vendored in ./stylegan_core/ in the pack root (used by nodes/mykee_stylegan.py). Its bias_act/
+# upfirdn2d/filtered_lrelu ops try to JIT-compile a fast CUDA kernel on first
+# use (needs an MSVC/CUDA build toolchain) and silently fall back to a
+# slower but fully portable pure-PyTorch implementation if that's not
+# available - no precompiled .pyd files are shipped (a .pyd built elsewhere
+# is tied to that exact Python/torch build and isn't portable between
+# ComfyUI installs, which is exactly what broke this the first time round).
+# The Editor and Vector Preparation nodes' `image` mode download NVIDIA's
+# VGG16 feature-detector checkpoint (~58MB) into ComfyUI/models/stylegan/
+# vgg16.pt on first use (needs network access to nvlabs-fi-cdn.nvidia.com
+# once; after that it's cached on disk). If that machine has no internet
+# access, download vgg16.pt by hand from:
+# https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/vgg16.pt
+# Picking the StyleGAN-Human model from any model combo before it's on disk
+# downloads it from Google Drive. Installing `gdown` (pip install gdown) is
+# the most reliable way to make that work - it's purpose-built to track
+# Google Drive's occasionally-changing download-confirmation flow. Without
+# it, a `requests`-based fallback is used instead (very likely already
+# installed - it's a near-universal Python dependency); either way, the
+# downloaded file is checked before being accepted, so a failed/blocked
+# download raises a clear error instead of silently saving an HTML error
+# page as if it were the model. Google Drive can also occasionally return
+# a "download quota exceeded for this file" error for heavily-downloaded
+# public files - if that happens, wait a while and retry, or download by
+# hand from the URL in the error message.
+# and place it at ComfyUI/models/stylegan/vgg16.pt yourself.
