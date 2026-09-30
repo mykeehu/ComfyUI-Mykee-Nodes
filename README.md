@@ -19,9 +19,10 @@ developers, these are specifically noted. Thank you to them!
 
 ## Installation
 
-1. Copy this folder into `ComfyUI/custom_nodes/`, so the end result is
-   `ComfyUI/custom_nodes/ComfyUI-Mykee-Nodes/`.
-2. Restart ComfyUI.
+1. Copy this folder into `ComfyUI/custom_nodes/`, or use
+   `git clone https://github.com/mykeehu/ComfyUI-Mykee-Nodes/` in `ComfyUI/custom_nodes/` folder,
+   so the end result is `ComfyUI/custom_nodes/ComfyUI-Mykee-Nodes/`.
+3. Restart ComfyUI.
 
 ## Mykee Counter 
 
