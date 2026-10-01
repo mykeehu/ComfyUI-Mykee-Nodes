@@ -16,6 +16,7 @@ _NODE_MODULES = [
     "mykee_room_reducer",
     "mykee_stylegan",
     "mykee_image",
+    "mykee_stripe_remover",
     "mykee_prompt_clarity",
     "mykee_prompt_template",
     "mykee_prompt_modifier",
