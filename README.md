@@ -1909,7 +1909,14 @@ those amplify the stripes).
   at least 256 x 128 px. It works on a high-passed copy of the image: the
   image mean would otherwise leak through the pooling for periods that are
   not exactly 16/k px (a measured 16.07 px produced fake stripes of about
-  1 level in v5). Off = zone fit only.
+  1 level in v5). Real periodic structure (brickwork, fences, hard edges: a
+  line amplitude of many levels) is excluded from the averaging (cells above
+  about 3 levels get ~0 weight before the smoothing) and the correction in a
+  cell never exceeds what that cell itself measures (v20). Before, such
+  structure leaked into smooth areas next to it: a synthetic test gave
+  +1.0 levels of fake 16 px stripes on a plain strip between two brick-like
+  blocks, and 20% of the real structure was removed; v20 leaves both
+  untouched. Off = zone fit only.
 - **adaptive_detail_limit** - adaptive pass only (default 25). Local detail
   strength, in 1/255 levels, at which the pass fades out. Higher = more
   stripe removal from textured areas (skin), but closer to strong edges.
@@ -1944,3 +1951,66 @@ those amplify the stripes).
   after VAE Decode, where the image is still floating point.
 - Batches are processed image by image, each with its own measurement.
 
+## Mykee/Latent - Mykee Latent Nyquist Notch
+
+Removes the component of a **LATENT** that alternates every single latent
+pixel (the Nyquist frequency), before the VAE decode. DiT models that
+patchify the latent in 2x2 blocks (Flux / Chroma / Qwen Image ...) can leave
+a faint 2-latent-pixel pattern behind; with an 8x VAE that is a 16 px stripe
+or grid pattern in the decoded image, and it gets stronger at high
+resolution (e.g. Chroma above 1024 px). The node is **experimental**: it was
+written from measurements of decoded images, not of latents - run it once
+with `mode = measure_only` first and read the status.
+
+The idea of a Nyquist notch comes from
+[ComfyUI-DeGrid](https://github.com/lunaaispace-eng/ComfyUI-DeGrid)
+(Apache-2.0), which removes the 2 px grid of the Qwen/Wan VAEs from decoded
+*images*. This node works on *latents* with a different, narrow-band method;
+no code was copied.
+
+Place it between the last sampler and `VAE Decode`.
+
+### Outputs
+
+- **latent** - the cleaned latent.
+- **removed** - what was subtracted (a LATENT; decode it only for curiosity).
+- **status** - per image and per component: strength, parity lock, local
+  envelope.
+
+### Settings
+
+- **enabled** - off = the latent passes through untouched.
+- **mode** - `remove`, or `measure_only` (nothing changes, the status is
+  still filled in).
+- **rows / columns / checker** - which components to look for. `rows` is the
+  part that alternates from one latent row to the next (horizontal stripes in
+  the image), `columns` the vertical stripes, `checker` the grid.
+- **strength** - how much of the measured component is subtracted (1 = all).
+- **smoothing** - latent pixels over which the local amplitude is averaged
+  (default 8 = 64 px in the image). Larger = narrower band, follows a drifting
+  pattern less closely; smaller = follows it more closely but touches more
+  real fine detail.
+- **min_strength** - a component is only removed when its amplitude is this
+  many times larger than the same measurement at neighbouring frequencies
+  (about 1 for noise or no pattern). Below it that component is left alone.
+- **protect_structure** - cells whose local amplitude is this many times above
+  the typical one are treated as real fine structure (fences, mesh, hard
+  edges) and excluded; 0 = off.
+- **max_amplitude** - largest correction per latent value; 0 = automatic
+  (3 x the median amplitude).
+- **log_to_console** - also print the status to the console.
+
+### Reading the status
+
+```
+rows (horizontal stripes): strength 31.0x, parity-locked 0.0120, local envelope 0.0172 rms (1.3% of latent std) - removed
+```
+
+- **strength** - how clearly the pattern stands out. Around 1x there is no
+  pattern; the stripes this node is meant for should read well above 3x.
+- **parity-locked** - amplitude when the pattern has a fixed phase over the
+  whole latent. **local envelope** - amplitude measured locally. If the
+  envelope is much larger than the parity-locked value, the phase drifts
+  (the sign flips along the image) - the node follows that.
+- If all components say "left untouched", the stripes of that image do not
+  come from a latent Nyquist pattern, and this node is not the right tool.

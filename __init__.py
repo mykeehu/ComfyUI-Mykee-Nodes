@@ -17,6 +17,7 @@ _NODE_MODULES = [
     "mykee_stylegan",
     "mykee_image",
     "mykee_stripe_remover",
+    "mykee_latent_nyquist_notch",
     "mykee_prompt_clarity",
     "mykee_prompt_template",
     "mykee_prompt_modifier",

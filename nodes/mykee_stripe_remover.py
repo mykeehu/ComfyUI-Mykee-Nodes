@@ -467,6 +467,14 @@ _AD_SY, _AD_SX = 4.0, 4.0       # smoothing sigma in pooled cells = 64 x 32 px
 _AD_KAPPA = 4.0                 # line must exceed kappa x neighbour level
 _AD_CAP = 1.5 / 255.0           # max amplitude of one removed line
 _AD_TOTAL_CAP = 3.0 / 255.0     # max total adaptive correction per pixel
+# Real periodic structure (brickwork, fences, blinds, hard edges) can have a
+# line amplitude of many levels. Cells above ~3 levels are NOT stripe
+# artifacts: they get ~0 weight BEFORE the spatial smoothing so they can not
+# leak into the smooth areas next to them (v19 added ~1 level of fake 16 px
+# stripes on a plain wall between two brick/edge areas), and the applied
+# correction is never larger than what the cell itself measures.
+_AD_REJECT = 3.0 / 255.0
+_AD_LOCAL = 1.5
 _AD_EDGE_E0 = 25.0              # default detail rms (levels) where the pass fades out
 _AD_MAX_PERIOD = 24.0           # slower lines are too close to image content
 _AD_DC_SIGMA = 12.0             # vertical high-pass before demodulation (rows)
@@ -488,8 +496,8 @@ def _smooth2d(t, sy, sx):
     return out
 
 
-def _lockin(x, f, py, px, sy, sx):
-    """Local complex amplitude of frequency f (cycles/px along H).
+def _lockin_raw(x, f, py, px):
+    """Pooled (UNsmoothed) complex amplitude of frequency f (cycles/px along H).
 
     x: (C, H, W). Returns (re, im), each (C, 1, H/py, W/px).
     """
@@ -501,9 +509,13 @@ def _lockin(x, f, py, px, sy, sx):
     sn = torch.sin(ang).to(x.dtype)[None, :, None]
     xr = (x * cs)[:, None, :hc, :wc]
     xi = (x * sn)[:, None, :hc, :wc]
-    zr = _smooth2d(F.avg_pool2d(xr, (py, px)), sy, sx)
-    zi = _smooth2d(F.avg_pool2d(xi, (py, px)), sy, sx)
-    return zr, zi
+    return F.avg_pool2d(xr, (py, px)), F.avg_pool2d(xi, (py, px))
+
+
+def _lockin(x, f, py, px, sy, sx):
+    """Local complex amplitude of frequency f, smoothed on the pooled grid."""
+    zr, zi = _lockin_raw(x, f, py, px)
+    return _smooth2d(zr, sy, sx), _smooth2d(zi, sy, sx)
 
 
 def _comb_frequencies(periods):
@@ -550,7 +562,13 @@ def _adaptive_pass(res, freqs, edge_e0=_AD_EDGE_E0):
     work = res - _conv_y(res, _gauss_kernel(_AD_DC_SIGMA, dev))
     ys = torch.arange(h, device=dev, dtype=torch.float64)
     for f in freqs:
-        zr, zi = _lockin(work, f, py, px, sy, sx)
+        zr0, zi0 = _lockin_raw(work, f, py, px)
+        mag0 = (zr0 * zr0 + zi0 * zi0).sqrt()                    # (C,1,Hp,Wp)
+        wgt = torch.exp(-((2.0 * mag0.amax(dim=0, keepdim=True))
+                          / _AD_REJECT) ** 4)                    # (1,1,Hp,Wp)
+        zr = _smooth2d(zr0 * wgt, sy, sx)
+        zi = _smooth2d(zi0 * wgt, sy, sx)
+        local = _smooth2d(mag0, 1.0, 1.0) * _AD_LOCAL
         n2, cnt = None, 0
         for sgn in (1.0, -1.0):
             fp = f + sgn / 64.0
@@ -567,7 +585,8 @@ def _adaptive_pass(res, freqs, edge_e0=_AD_EDGE_E0):
         gain = (1.0 - _AD_KAPPA * n2 / p2.clamp(min=1e-18)).clamp(0.0, 1.0)
         gr, gi = zr * gain * gate, zi * gain * gate
         mag = (gr * gr + gi * gi).sqrt()
-        scale = (_AD_CAP / 2.0 / mag.clamp(min=1e-12)).clamp(max=1.0)
+        lim = local.clamp(max=_AD_CAP / 2.0)
+        scale = (lim / mag.clamp(min=1e-12)).clamp(max=1.0)
         gr, gi = gr * scale, gi * scale
         up_r = F.interpolate(gr, size=(h, w), mode="bilinear",
                              align_corners=False)[:, 0]
