@@ -1968,7 +1968,12 @@ The idea of a Nyquist notch comes from
 *images*. This node works on *latents* with a different, narrow-band method;
 no code was copied.
 
-Place it between the last sampler and `VAE Decode`.
+Place it after every sampler pass that produces stripes, directly before the
+next step that consumes the latent (`VAE Decode`, or the latent upscale of a
+two-pass workflow). In a two-pass workflow (e.g. 1024 px base pass, 2x latent
+upscale, second pass) use one node after each KSampler: the stripes of the
+second, high-resolution pass are not touched by a node that sits only after
+the first pass.
 
 ### Outputs
 
@@ -1993,6 +1998,11 @@ Place it between the last sampler and `VAE Decode`.
 - **min_strength** - a component is only removed when its amplitude is this
   many times larger than the same measurement at neighbouring frequencies
   (about 1 for noise or no pattern). Below it that component is left alone.
+  Default 1.0 (= always remove). The strength value is a global median and
+  understates patterns that are present only in parts of a large latent: on a
+  256x256 latent (2048 px image) it read only 1.3-1.4x although removal
+  clearly reduced the stripes, so a threshold of 2 or more would have
+  skipped it.
 - **protect_structure** - cells whose local amplitude is this many times above
   the typical one are treated as real fine structure (fences, mesh, hard
   edges) and excluded; 0 = off.
@@ -2007,10 +2017,13 @@ rows (horizontal stripes): strength 31.0x, parity-locked 0.0120, local envelope 
 ```
 
 - **strength** - how clearly the pattern stands out. Around 1x there is no
-  pattern; the stripes this node is meant for should read well above 3x.
+  pattern. On small latents (e.g. 128x128) the stripes this node is meant for
+  read around 3x or higher; on large latents patchy stripes can read as low
+  as 1.3x and still be removed (see `min_strength`).
 - **parity-locked** - amplitude when the pattern has a fixed phase over the
   whole latent. **local envelope** - amplitude measured locally. If the
   envelope is much larger than the parity-locked value, the phase drifts
   (the sign flips along the image) - the node follows that.
-- If all components say "left untouched", the stripes of that image do not
-  come from a latent Nyquist pattern, and this node is not the right tool.
+- If all components say "left untouched" with a raised `min_strength`, lower
+  it to 1.0 and compare the result before concluding that the stripes do not
+  come from a latent Nyquist pattern.
