@@ -164,7 +164,7 @@ class MykeeLatentNyquistNotch:
                                        "step": 0.01}),
                 "smoothing": ("FLOAT", {"default": 8.0, "min": 2.0, "max": 32.0,
                                         "step": 0.5}),
-                "min_strength": ("FLOAT", {"default": 1.0, "min": 1.0, "max": 50.0,
+                "min_strength": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 50.0,
                                            "step": 0.5}),
                 "protect_structure": ("FLOAT", {"default": 4.0, "min": 0.0,
                                                 "max": 10.0, "step": 0.5}),
