@@ -2009,6 +2009,25 @@ the first pass.
 - **max_amplitude** - largest correction per latent value; 0 = automatic
   (3 x the median amplitude).
 - **log_to_console** - also print the status to the console.
+- **log_channels** - diagnostics only, does not change the result. For every
+  processed component the status also lists the signed local amplitude of each
+  latent channel (x1000) averaged over the whole latent, both edge bands and
+  the centre, plus the cosine similarity between these vectors. Cosines close
+  to +1 between the edge bands and the whole latent mean the stripe has a
+  stable per-channel pattern.
+- **signature_pooling** - off by default. The stripe of one component usually
+  appears in the latent channels with a fixed, signed pattern. When this is on,
+  that pattern is estimated from the whole latent (channel means), the local
+  per-channel amplitude is projected onto it, and one amplitude field is
+  estimated from all channels together and written back through the pattern.
+  Compared with the per-channel estimate this removes less noise and fine
+  detail for the same `smoothing`, so a smaller `smoothing` (2-3) can be used
+  with less loss of detail. It never removes more than the per-channel
+  estimate: whatever does not fit the pattern stays in the latent. The auto
+  limit of `max_amplitude` is replaced by 8x the rms of the pooled amplitude
+  (or by `max_amplitude` when it is set). The status line shows how much of the
+  amplitude energy the pooled estimate keeps; a low value means the stripe
+  does not follow a single channel pattern.
 
 ### Reading the status
 
