@@ -857,7 +857,7 @@ class MykeeStripeRemover:
                                "profile.",
                 }),
                 "detection_threshold": ("FLOAT", {
-                    "default": 40.0, "min": 5.0, "max": 1000.0, "step": 1.0,
+                    "default": 20.0, "min": 5.0, "max": 1000.0, "step": 1.0,
                     "tooltip": "Auto mode: how sharp a periodic peak must be "
                                "(compared with the noise around it) to count "
                                "as stripes. Lower = more sensitive, higher = "
