@@ -35,6 +35,7 @@ _PROBE_OFFSETS = (1.0 / 16.0, 1.0 / 10.0)   # cycles/px away from Nyquist
 _NOISE_NORM = 0.81        # median|a| / median|probe| for pure noise
 _PROTECT_SIGMA = 1.5      # latent px, small smoothing used to find real structure
 _AUTO_LIMIT_MULT = 3.0
+_POOL_LIMIT_MULT = 8.0     # signature pooling: clamp = this x rms of the amplitude field
 _MIN_SIZE = 32            # smaller latents are passed through
 
 _COMPONENTS = (
@@ -101,8 +102,37 @@ def _strength(x, name, sigma, sx):
     return float(_median_all(a) / (pm + 1e-12) / _NOISE_NORM)
 
 
-def _component(x, name, sigma, protect, max_amp, car):
-    """Smoothed, signed Nyquist amplitude (N, C, H, W) of one carrier."""
+def _pool_signature(r, a, max_amp):
+    """Signature pooling. The stripe of one component tends to show up in the
+    latent channels with a fixed, signed pattern. That pattern is estimated
+    from the whole latent (channel means of r, thousands of samples), and the
+    per-channel amplitude `a` is projected onto it: a single scalar field is
+    estimated from all channels together and written back through the pattern.
+    The projection never removes more energy than the per-channel estimate;
+    whatever does not fit the pattern is left in the latent.
+    Returns (pooled amplitude, fraction of the amplitude energy captured) or
+    None when there is no usable signature."""
+    g = r.mean(dim=(2, 3), keepdim=True)                       # (N, C, 1, 1)
+    gn = torch.sqrt((g * g).mean(dim=1, keepdim=True))         # (N, 1, 1, 1)
+    if float(gn.min()) < 1e-8:
+        return None
+    g = g / gn
+    gg = (g * g).sum(dim=1, keepdim=True)
+    p = (g * a).sum(dim=1, keepdim=True) / gg                  # (N, 1, H, W)
+    if max_amp > 0:
+        lim = float(max_amp) / (float(g.abs().max()) + 1e-12)
+    else:
+        lim = _POOL_LIMIT_MULT * float(torch.sqrt((p * p).mean()))
+    p = p.clamp(-lim, lim)
+    pooled = g * p
+    captured = float((pooled * pooled).sum() / ((a * a).sum() + 1e-20))
+    return pooled, captured
+
+
+def _component(x, name, sigma, protect, max_amp, car, pool=False):
+    """Smoothed, signed Nyquist amplitude (N, C, H, W) of one carrier.
+    Returns (amplitude, captured) where captured is the fraction of energy
+    kept by signature pooling (None when pooling is off or not possible)."""
     r = x * car[name]
     if protect > 0:
         a0 = _smooth(r, _PROTECT_SIGMA).abs()
@@ -110,16 +140,56 @@ def _component(x, name, sigma, protect, max_amp, car):
         wgt = torch.exp(-(a0 / (protect * 1.4826 * med + 1e-9)) ** 4)
         r = r * wgt
     a = _smooth(r, sigma)
+    if pool:
+        res = _pool_signature(r, a, max_amp)
+        if res is not None:
+            return res
     if max_amp > 0:
         lim = torch.full_like(a[:, :, :1, :1], float(max_amp))
     else:
         lim = _AUTO_LIMIT_MULT * a.abs().flatten(2).median(dim=2).values.view(
             x.shape[0], x.shape[1], 1, 1)
-    return torch.maximum(torch.minimum(a, lim), -lim)
+    return torch.maximum(torch.minimum(a, lim), -lim), None
+
+
+def _fmt_vec(v):
+    """Per-channel values in thousandths, e.g. '+12 -8 +3 ...'."""
+    return " ".join("%+d" % int(round(1000.0 * float(t))) for t in v)
+
+
+def _cosine(u, v):
+    n = float(u.norm()) * float(v.norm()) + 1e-12
+    return float(torch.dot(u, v)) / n
+
+
+def _channel_lines(a, name):
+    """Diagnostic only: signed local Nyquist amplitude per latent channel,
+    averaged over the whole latent, both edge bands and the centre. If the
+    stripe has a stable per-channel pattern, the cosines are close to +1."""
+    _, c, h, w = a.shape
+    band = max(4, (w if name == "columns" else h) // 16)
+    whole = a.mean(dim=(0, 2, 3))
+    if name == "columns":
+        e0 = a[:, :, :, :band].mean(dim=(0, 2, 3))
+        e1 = a[:, :, :, -band:].mean(dim=(0, 2, 3))
+    else:
+        e0 = a[:, :, :band, :].mean(dim=(0, 2, 3))
+        e1 = a[:, :, -band:, :].mean(dim=(0, 2, 3))
+    mid = a[:, :, h // 4:3 * h // 4, w // 4:3 * w // 4].mean(dim=(0, 2, 3))
+    return [
+        "  channels x1000 (signed amplitude, edge band = %d px):" % band,
+        "    whole : " + _fmt_vec(whole),
+        "    start : " + _fmt_vec(e0),
+        "    end   : " + _fmt_vec(e1),
+        "    centre: " + _fmt_vec(mid),
+        "    cosine start/whole %+.2f  end/whole %+.2f  start/end %+.2f  "
+        "centre/whole %+.2f" % (_cosine(e0, whole), _cosine(e1, whole),
+                               _cosine(e0, e1), _cosine(mid, whole)),
+    ]
 
 
 def _process_one(x, use, strength, sigma, min_strength, protect, max_amp,
-                 measure_only):
+                 measure_only, log_channels=False, pooling=False):
     """x: (1, C, H, W) float32. Returns (cleaned, lines)."""
     _, c, h, w = x.shape
     car, sx = _carriers(h, w, x.device, x.dtype)
@@ -135,17 +205,26 @@ def _process_one(x, use, strength, sigma, min_strength, protect, max_amp,
             lines.append("%s: strength %.1fx - below %.1fx, left untouched"
                          % (label, st, min_strength))
             continue
-        a = _component(x, name, sigma, protect, max_amp, car)
+        a, captured = _component(x, name, sigma, protect, max_amp, car,
+                                 pooling)
         env = float(torch.sqrt((a * a).mean()))
         part = a * car[name]
         txt = ("%s: strength %.1fx, parity-locked %.4f, local envelope %.4f rms "
                "(%.2f%% of latent std)" % (label, st, lock, env, 100.0 * env / std))
+        if pooling:
+            if captured is None:
+                txt += " [pooling skipped: no channel signature]"
+            else:
+                txt += (" [signature pooling: %.0f%% of the amplitude energy kept]"
+                        % (100.0 * captured))
         if not measure_only:
             corr = corr + float(strength) * part
             txt += " - removed"
         else:
             txt += " - measured only"
         lines.append(txt)
+        if log_channels:
+            lines.extend(_channel_lines(a, name))
     return x - corr, lines
 
 
@@ -171,6 +250,8 @@ class MykeeLatentNyquistNotch:
                 "max_amplitude": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0,
                                             "step": 0.001}),
                 "log_to_console": ("BOOLEAN", {"default": False}),
+                "log_channels": ("BOOLEAN", {"default": False}),
+                "signature_pooling": ("BOOLEAN", {"default": False}),
             }
         }
 
@@ -181,7 +262,7 @@ class MykeeLatentNyquistNotch:
 
     def run(self, latent, enabled, mode, rows, columns, checker, strength,
             smoothing, min_strength, protect_structure, max_amplitude,
-            log_to_console):
+            log_to_console, log_channels=False, signature_pooling=False):
         samples = latent["samples"]
         stamp = time.strftime("%H:%M:%S")
         if not enabled:
@@ -213,7 +294,8 @@ class MykeeLatentNyquistNotch:
             ci, lines = _process_one(
                 xi, use, strength, float(smoothing), float(min_strength),
                 float(protect_structure), float(max_amplitude),
-                mode == "measure_only")
+                mode == "measure_only", bool(log_channels),
+                bool(signature_pooling))
             out[i:i + 1] = ci.to(orig_dtype)
             if n > 1:
                 text.append("Image %d/%d:" % (i + 1, n))
