@@ -25,6 +25,7 @@ _NODE_MODULES = [
     "mykee_conditioning",
     "mykee_seed",
     "mykee_xyz_plot",
+    "mykee_model_template",
     "mykee_text_switch",
     "mykee_text_injection",
 ]
