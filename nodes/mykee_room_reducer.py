@@ -223,6 +223,111 @@ def _patch_resemble_enhance_numpy2_compat():
     Solver.exponential_decay_mapping = staticmethod(_exponential_decay_mapping_fixed)
 
 
+# --- Progress reporting (KSampler-style bar on the node) -------------------
+
+class _RoomProgress:
+    """
+    Maps Resemble Enhance's two nested loops (30 s audio chunks, and the
+    CFM solver steps inside each chunk) onto ONE ComfyUI ProgressBar, so
+    the node shows a live bar like KSampler does - across batch items and
+    across the optional extra denoise pass for wet_mix blending.
+
+    Within a phase, progress = (chunk + steps_done_in_chunk / steps_per_chunk)
+    / n_chunks. The denoise-only passes have no solver steps, so they move
+    per chunk. Resolution is 1000 units.
+    """
+
+    TOTAL = 1000
+
+    def __init__(self, pbar, unique_id, batch):
+        self.pbar = pbar
+        self.unique_id = unique_id
+        self.batch = batch
+        self.item = 0
+        self.lo, self.hi = 0.0, 1.0
+        self.label = ""
+        self.n_chunks, self.chunk = 1, 0
+        self.steps_per_chunk, self.step = 0, 0
+
+    def begin_item(self, item):
+        self.item = item
+
+    def begin_phase(self, lo, hi, label):
+        """lo/hi: this phase's share (0-1) of the current batch item."""
+        self.lo, self.hi, self.label = lo, hi, label
+        self.n_chunks, self.chunk = 1, 0
+        self.steps_per_chunk, self.step = 0, 0
+        self._emit()
+
+    def chunk_started(self, index, total):
+        self.n_chunks = max(total, 1)
+        self.chunk = index
+        self.step = 0
+        self.steps_per_chunk = 0
+        self._emit()
+        if index < total:
+            _send_status(
+                self.unique_id,
+                f"{self.label} [{self.item + 1}/{self.batch}] chunk {index + 1}/{total}",
+            )
+
+    def step_done(self, steps_per_chunk):
+        self.steps_per_chunk = max(int(steps_per_chunk), 1)
+        self.step += 1
+        self._emit()
+
+    def _emit(self):
+        within = min(self.step / self.steps_per_chunk, 1.0) if self.steps_per_chunk else 0.0
+        phase_frac = min((self.chunk + within) / self.n_chunks, 1.0)
+        item_frac = self.lo + (self.hi - self.lo) * phase_frac
+        overall = (self.item + item_frac) / self.batch
+        if self.pbar is not None:
+            self.pbar.update_absolute(int(min(overall, 1.0) * self.TOTAL), self.TOTAL)
+
+
+@contextlib.contextmanager
+def _progress_hooks(progress):
+    """
+    Temporarily hooks Resemble Enhance's chunk loop (its `trange` in
+    resemble_enhance.inference) and CFM solver step (Solver._step) so they
+    report into `progress`. Both hooks also poll ComfyUI's interrupt flag,
+    so Cancel now works mid-clip too, not only between batch items.
+    Everything is restored on exit, even on error/interrupt.
+    """
+    import resemble_enhance.inference as re_inference
+    from resemble_enhance.enhancer.lcfm.cfm import Solver
+
+    orig_trange = re_inference.trange
+    orig_step_prop = Solver.__dict__["_step"]
+
+    def trange_with_progress(*args, **kwargs):
+        total = len(range(*args))
+        for i, value in enumerate(orig_trange(*args, **kwargs)):
+            _check_interrupted()
+            progress.chunk_started(i, total)
+            yield value
+        progress.chunk_started(total, total)
+
+    def step_getter(self):
+        fn = orig_step_prop.fget(self)
+
+        def counted(*a, **k):
+            _check_interrupted()
+            out = fn(*a, **k)
+            progress.step_done(self.n_steps)
+            return out
+
+        return counted
+
+    re_inference.trange = trange_with_progress
+    Solver._step = property(step_getter)
+    try:
+        yield
+    finally:
+        re_inference.trange = orig_trange
+        Solver._step = orig_step_prop
+
+
 # --- Resemble Enhance (optional AI room-coloration reducer) --------------
 
 _ROOM_REDUCER_CACHE = {}
@@ -274,16 +379,16 @@ def _load_room_reducer(device_str):
     return patcher
 
 
-def _run_room_reducer(mono, sample_rate, device_str, mode, nfe, solver, lambd, tau, blend_source, wet_mix):
+def _run_room_reducer(mono, sample_rate, device_str, mode, nfe, solver, lambd, tau, blend_source, wet_mix, progress=None):
     """
     Runs Resemble Enhance on `mono` (1D torch tensor, any sample rate -
     the library resamples internally) and returns
     (wav, 44100, blend_wav_or_None, blend_sr_or_None); the library's own
     inference() handles chunking/crossfading long clips internally, so
     there's no manual chunking loop here (unlike MykeeAIVoiceRestore's
-    VoiceFixer wrapper, which has to do that itself). This also means
-    there's no mid-clip interrupt point - a Cancel only takes effect
-    between BATCH items, not within one long clip's processing.
+    VoiceFixer wrapper, which has to do that itself). Progress and Cancel
+    inside a clip come from `progress` (see _progress_hooks), which hooks
+    the library's own chunk loop and solver step.
 
     `mode` picks which stage runs:
     - "denoise_only": just the denoiser (removes background noise;
@@ -306,19 +411,29 @@ def _run_room_reducer(mono, sample_rate, device_str, mode, nfe, solver, lambd, t
     """
     _load_room_reducer(device_str)  # ensures loaded/registered with ComfyUI's memory manager
 
-    if mode == "denoise_only":
-        from resemble_enhance.enhancer.inference import denoise
-        wav, out_sr = denoise(mono, sample_rate, device_str)
-        return wav.to(dtype=mono.dtype).cpu(), out_sr, None, None
+    hooks = _progress_hooks(progress) if progress is not None else contextlib.nullcontext()
 
-    from resemble_enhance.enhancer.inference import enhance
-    wav, out_sr = enhance(mono, sample_rate, device_str, nfe=nfe, solver=solver, lambd=lambd, tau=tau)
+    with hooks:
+        if mode == "denoise_only":
+            from resemble_enhance.enhancer.inference import denoise
+            if progress is not None:
+                progress.begin_phase(0.0, 1.0, "Denoising")
+            wav, out_sr = denoise(mono, sample_rate, device_str)
+            return wav.to(dtype=mono.dtype).cpu(), out_sr, None, None
 
-    blend_wav, blend_sr = None, None
-    if wet_mix < 1.0 and blend_source == "denoise_only":
-        from resemble_enhance.enhancer.inference import denoise
-        blend_wav, blend_sr = denoise(mono, sample_rate, device_str)
-        blend_wav = blend_wav.to(dtype=mono.dtype).cpu()
+        from resemble_enhance.enhancer.inference import enhance
+        needs_blend_pass = wet_mix < 1.0 and blend_source == "denoise_only"
+        if progress is not None:
+            progress.begin_phase(0.0, 0.9 if needs_blend_pass else 1.0, "Enhancing")
+        wav, out_sr = enhance(mono, sample_rate, device_str, nfe=nfe, solver=solver, lambd=lambd, tau=tau)
+
+        blend_wav, blend_sr = None, None
+        if needs_blend_pass:
+            from resemble_enhance.enhancer.inference import denoise
+            if progress is not None:
+                progress.begin_phase(0.9, 1.0, "Denoising (blend)")
+            blend_wav, blend_sr = denoise(mono, sample_rate, device_str)
+            blend_wav = blend_wav.to(dtype=mono.dtype).cpu()
 
     return wav.to(dtype=mono.dtype).cpu(), out_sr, blend_wav, blend_sr
 
@@ -445,8 +560,10 @@ class MykeeRoomReducer:
                    "CUDA requested but not available - falling back to CPU (this will be slow).")
             device_str = "cpu"
 
-        pbar = _make_progress_bar()
-        _set_progress(pbar, 0)
+        pbar = _ComfyProgressBar(_RoomProgress.TOTAL) if _ComfyProgressBar is not None else None
+        batch_count = waveform.shape[0]
+        progress = _RoomProgress(pbar, unique_id, batch_count)
+        progress.begin_item(0)
 
         try:
             batch = waveform.shape[0]
@@ -454,12 +571,13 @@ class MykeeRoomReducer:
 
             for b in range(batch):
                 _check_interrupted()
+                progress.begin_item(b)
                 _send_status(unique_id, f"Reducing room character [{b + 1}/{batch}]...")
                 clip = waveform[b]  # [C, S]
                 mono = clip.mean(dim=0)
 
                 out, out_sr, blend_wav, blend_sr = _run_room_reducer(
-                    mono, original_sr, device_str, mode, nfe, solver, room_strength, tau, wet_mix_blend_source, wet_mix
+                    mono, original_sr, device_str, mode, nfe, solver, room_strength, tau, wet_mix_blend_source, wet_mix, progress=progress
                 )
 
                 if out_sr != original_sr:
@@ -476,7 +594,6 @@ class MykeeRoomReducer:
                     out = wet_mix * out[..., :n] + (1.0 - wet_mix) * blend_base[..., :n]
 
                 processed.append(out.unsqueeze(0))  # [1, S] - mono channel dim
-                _set_progress(pbar, int(90 * (b + 1) / batch))
 
             max_len = max(c.shape[-1] for c in processed)
             padded = [
@@ -485,7 +602,8 @@ class MykeeRoomReducer:
             ]
             out_waveform = torch.stack(padded, dim=0)
 
-            _set_progress(pbar, 100)
+            if pbar is not None:
+                pbar.update_absolute(_RoomProgress.TOTAL, _RoomProgress.TOTAL)
             _send_status(unique_id, "Done")
             return ({"waveform": out_waveform, "sample_rate": original_sr},)
         except Exception:

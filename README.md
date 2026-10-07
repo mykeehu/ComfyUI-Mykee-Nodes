@@ -824,6 +824,11 @@ is resampled back to the *original* input's sample rate. A batched
 trailing silence to a common length afterward. Needs a GPU for
 reasonable speed (CPU is very slow, especially at higher `nfe`).
 
+The node shows a KSampler-style progress bar while it runs. It tracks
+both the 30 s audio chunks and the solver steps inside each chunk (plus
+the extra denoise pass when `wet_mix_blend_source` is `denoise_only`),
+and Cancel now takes effect mid-clip instead of only between batch items.
+
 ### Checkpoint location
 
 Unlike this pack's other AI nodes (VoiceFixer, Seed-VC), this one's
