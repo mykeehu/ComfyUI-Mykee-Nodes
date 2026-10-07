@@ -34,6 +34,11 @@ pip install -r requirements.txt
 
 ## Mykee Counter 
 
+<p align="center">
+  <img src="images/counter.png" alt="Mykee Counter">
+</p>
+
+
 - **value** (INT) - the counter's current value. Can be overwritten by
   hand at any time before running (queuing) - counting then continues
   from there. After every run, the node automatically writes the new
@@ -66,6 +71,11 @@ pip install -r requirements.txt
 
 ## Mykee Counter (Seed Advanced)
 
+<p align="center">
+  <img src="images/counter-seed-advanced.png" alt="Mykee Counter (Seed Advanced)">
+</p>
+
+
 Same as "Mykee Counter", plus a dedicated **seed** (INT) field:
 
 - The `seed` widget can be typed by hand, or turned into a connectable
@@ -84,6 +94,11 @@ Same as "Mykee Counter", plus a dedicated **seed** (INT) field:
   until the server restarts.
 
 ## Mykee Invert Mask (Toggle)
+
+<p align="center">
+  <img src="images/invert-mask-toggle.png" alt="Mykee Invert Mask (Toggle)">
+</p>
+
 
 An enhanced version of the base ComfyUI "InvertMask" node with an
 `enabled` (On/Off) toggle:
@@ -144,6 +159,11 @@ will download it automatically on first run.
 ### Nodes
 
 **Mykee Face Detect + Align/Crop (YuNet)**
+
+<p align="center">
+  <img src="images/face-detect-align-crop-yunet.png" alt="Mykee Face Detect + Align/Crop (YuNet)">
+</p>
+
 Input: an image. Finds the best face with YuNet (`highest_score` or
 `largest`), and returns three crops:
 - `aligned_face` - 112x112, aligned via the similarity transform computed
@@ -234,14 +254,29 @@ bigger/smaller mask at the same crop framing, not a bigger/smaller crop.
 Only affects the masks, not `context_crop`/`aligned_face`.
 
 **Mykee Face Embed (SFace)**
+
+<p align="center">
+  <img src="images/face-embed-sface.png" alt="Mykee Face Embed (SFace)">
+</p>
+
 128-dim face embedding from the `aligned_face` input.
 
 **Mykee Subject Embed (DINOv2)**
+
+<p align="center">
+  <img src="images/subject-embed-dino-v2.png" alt="Mykee Subject Embed (DINOv2)">
+</p>
+
 A 768-dim "subject" embedding from a full (not just face-cropped)
 reference image - this is what captures body-shape/clothing consistency
 where SFace only ever looks at the face.
 
 **Mykee Identity Score (cosine)**
+
+<p align="center">
+  <img src="images/identity-score-cosine.png" alt="Mykee Identity Score (cosine)">
+</p>
+
 Cosine similarity between two embeddings (either can be a face or subject
 embedding, as long as both inputs have the same dimensionality).
 `similarity` (FLOAT) + `passed` (BOOLEAN, per `pass_threshold`) - this
@@ -266,6 +301,11 @@ to crop out with the Face Detect+Align/Crop node and compare against the
 right reference.
 
 **Mykee Identity Compare (Multi-Person)**
+
+<p align="center">
+  <img src="images/identity-compare-multi-person.png" alt="Mykee Identity Compare (Multi-Person)">
+</p>
+
 An all-in-one convenience node - no need to build a separate Face Detect +
 Face Embed chain; it takes images directly:
 - `generated_image` - the generated image to evaluate
@@ -318,6 +358,11 @@ matched as a "person" over a real face - which is exactly what
 the false detection instead of the real face).
 
 **Mykee Character Reference Pack**
+
+<p align="center">
+  <img src="images/character-reference-pack.png" alt="Mykee Character Reference Pack">
+</p>
+
 Up to 9 `image_N` inputs (each with an optional `role_N`:
 face/body/cloth_top/cloth_bottom/other), from which it builds a
 common-size-scaled `reference_batch` (IMAGE) and a `ref_prompt_prefix`
@@ -349,6 +394,11 @@ prepended to the final prompt with a String Concatenate node.
   that drifted from the identity.
 
 ## Mykee/Audio - Mykee Audio Merger
+
+<p align="center">
+  <img src="images/audio-merger.png" alt="Mykee/Audio - Mykee Audio Merger">
+</p>
+
 
 Two-input audio mixer: `audio_narrator` (foreground, e.g. TTS narration) +
 `audio_background` (ambience/noise bed) -> one merged `AUDIO` output.
@@ -383,6 +433,11 @@ tuning by ear per source pair.
 
 ## Mykee/Audio - Mykee Silence Remover
 
+<p align="center">
+  <img src="images/silence-remover.png" alt="Mykee/Audio - Mykee Silence Remover">
+</p>
+
+
 Caps long silent gaps inside an `AUDIO` clip down to a set maximum
 length, and optionally pads fresh silence onto the start/end. Useful for
 cleaning up dead air from any source, not just this pack's own TTS
@@ -411,6 +466,11 @@ afterward so it's still a valid single `AUDIO` output.
 
 ## Mykee/Audio - Mykee Stereo To Mono
 
+<p align="center">
+  <img src="images/stereo-to-mono.png" alt="Mykee/Audio - Mykee Stereo To Mono">
+</p>
+
+
 Simple channel-count normalizer: forces the `AUDIO` output to mono or
 stereo regardless of whether the input already is mono or stereo.
 
@@ -420,6 +480,11 @@ stereo regardless of whether the input already is mono or stereo.
   (channel-averaged); a mono input passes through unchanged.
 
 ## Mykee/Audio - Mykee Audio Leveling
+
+<p align="center">
+  <img src="images/audio-leveling.png" alt="Mykee/Audio - Mykee Audio Leveling">
+</p>
+
 
 Fixes level drift/wandering in an `AUDIO` clip - e.g. a speaker who moved
 closer to/further from the mic mid-recording - and/or normalizes its
@@ -443,6 +508,11 @@ own node (not folded into Mykee Audio DSP Cleanup) so it can go anywhere
 in the chain relative to this pack's other audio nodes.
 
 ## Mykee/Audio - Mykee Emotion Timbre
+
+<p align="center">
+  <img src="images/emotion-timbre.png" alt="Mykee/Audio - Mykee Emotion Timbre">
+</p>
+
 
 Also WORLD-vocoder-based, but built around what the emotional-speech-
 prosody literature actually says drives perceived emotion in a voice:
@@ -573,6 +643,11 @@ directly into **Mykee Audio Merger**'s `audio_narrator` input.
 
 ## Mykee/Audio - Mykee Voice/Accent Match
 
+<p align="center">
+  <img src="images/voice-accent-match.png" alt="Mykee/Audio - Mykee Voice/Accent Match">
+</p>
+
+
 A universal, model-independent post-processor: takes any generated audio
 plus a short reference sample and reshapes the generated voice's timbre
 and/or pitch-level/accent character to match the reference - regardless of
@@ -659,6 +734,11 @@ first would silently "win" and the other would fail to import at all
 
 ## Mykee/Audio - Mykee Audio DSP Cleanup
 
+<p align="center">
+  <img src="images/audio-dsp-cleanup.png" alt="Mykee/Audio - Mykee Audio DSP Cleanup">
+</p>
+
+
 Fast, dependency-light DSP fixes for a recording made without a
 dedicated/close mic - distant, off-axis, "in the background": low,
 wandering level; muffled tonal balance; audible mains hum; background
@@ -688,6 +768,11 @@ A batched `AUDIO` input is processed per-item; results are re-padded
 (silence/channel-repeated) to a common shape afterward.
 
 ## Mykee/Audio - Mykee Audio Dereverb
+
+<p align="center">
+  <img src="images/audio-dereverb.png" alt="Mykee/Audio - Mykee Audio Dereverb">
+</p>
+
 
 Reduces room reverb/echo via WPE (Weighted Prediction Error) - a
 classical, non-neural late-reverberation suppression algorithm (not a
@@ -729,6 +814,11 @@ so a long clip will take a while; there's a progress status while it
 runs. A batched `AUDIO` input is processed per-item.
 
 ## Mykee/Audio - Mykee Room Reducer
+
+<p align="center">
+  <img src="images/room-reducer.png" alt="Mykee/Audio - Mykee Room Reducer">
+</p>
+
 
 Reduces the "distant mic / roomy" character of a speech recording -
 **not** the same problem as **Mykee Audio Dereverb** solves. WPE (that
@@ -894,6 +984,11 @@ for these):
   one method in place with an equivalent, numpy-2.x-safe version.
 
 ## Mykee/Audio - Mykee AI Voice Restore
+
+<p align="center">
+  <img src="images/ai-voice-restore.png" alt="Mykee/Audio - Mykee AI Voice Restore">
+</p>
+
 
 Runs VoiceFixer (https://github.com/haoheliu/voicefixer), a model trained
 specifically to restore degraded speech (denoise + de-reverb + bandwidth
@@ -1064,6 +1159,11 @@ would for the coarse/middle/fine breakdown above.
 
 ### Mykee StyleGAN Image Generation
 
+<p align="center">
+  <img src="images/styleGAN-Image-Generation.png" alt="Mykee StyleGAN Image Generation">
+</p>
+
+
 (Internally still `MykeeStyleGANFaceGenerator` / keyed around "face" since
 this pack's vectors are built for faces - but any StyleGAN2/3 generator
 works the same way regardless of what it was trained to produce.)
@@ -1081,6 +1181,11 @@ works the same way regardless of what it was trained to produce.)
 - Output: **IMAGE**.
 
 ### Mykee StyleGAN Editor
+
+<p align="center">
+  <img src="images/styleGAN-editor.png" alt="Mykee StyleGAN Editor">
+</p>
+
 
 Same idea as Image Generation, but edits an existing photo instead of
 generating from a seed - the "GAN inversion + latent editing" technique
@@ -1114,6 +1219,11 @@ vectors, re-synthesize). Same vector sliders, same refresh button, same
   training data), same as the Vector Preparation node's `image` mode.
 
 ### Mykee StyleGAN Vector Preparation
+
+<p align="center">
+  <img src="images/styleGAN-vector-preparation.png" alt="Mykee StyleGAN Vector Preparation">
+</p>
+
 
 Builds the two W-space extremes of a new vector and previews them -
 **nothing is ever written to disk by this node.** Re-roll seeds or try
@@ -1186,6 +1296,11 @@ into it.
   while it runs.
 
 ### Mykee StyleGAN Vector Save
+
+<p align="center">
+  <img src="images/styleGAN-vector-save.png" alt="Mykee StyleGAN Vector Save">
+</p>
+
 
 Takes a **w_pair** connection from a Vector Preparation node and, only when
 `armed` is on, saves `diff = w_b - w_a` as `<vector_name>.npy` plus
@@ -1294,6 +1409,11 @@ also save.
 
 ## Mykee/Image - Mykee Color Background
 
+<p align="center">
+  <img src="images/color-background.png" alt="Mykee/Image - Mykee Color Background">
+</p>
+
+
 Composites a foreground image (optionally with a mask acting as its alpha
 channel) onto a solid color background - the same idea as comfy_mtb's
 ["Colored Image"](https://github.com/melMass/comfy_mtb) node, but with a
@@ -1326,6 +1446,11 @@ Outputs:
   normalized `#RRGGBB` hex code.
 
 ## Mykee/Image - Mykee Image Switch
+
+<p align="center">
+  <img src="images/image-switch.png" alt="Mykee/Image - Mykee Image Switch">
+</p>
+
 
 A 2-input image switch with real passthrough for the "one branch is
 inactive" case - most switch nodes' single output only ever maps to
@@ -1392,6 +1517,11 @@ Outputs:
 
 ## Mykee/Image - Mykee Image Switch (Advanced)
 
+<p align="center">
+  <img src="images/image-switch-advanced.png" alt="Mykee/Image - Mykee Image Switch (Advanced)">
+</p>
+
+
 Same idea as Mykee Image Switch, but with any number of image inputs
 instead of a fixed 2 - the node starts with `image_1`/`image_2`, and a
 new empty input appears automatically as soon as you connect something
@@ -1452,6 +1582,11 @@ Outputs:
 
 ## Mykee/Conditioning - Mykee Switch Conditioning
 
+<p align="center">
+  <img src="images/switch-conditioning.png" alt="Mykee/Conditioning - Mykee Switch Conditioning">
+</p>
+
+
 A rework of Crystian's ["Switch conditioning"](https://github.com/crystian/comfyui-crystools)
 node from ComfyUI-Crystools, with more forgiving logic for the common
 case where only one of the two branches is actually wired up. The
@@ -1500,6 +1635,11 @@ Outputs:
   `conditioning` is blocked.
 
 ## Mykee/Prompt - Mykee Prompt Template
+
+<p align="center">
+  <img src="images/prompt-template.png" alt="Mykee/Prompt - Mykee Prompt Template">
+</p>
+
 
 A small prompt library node. `positive_prompt_text` and
 `negative_prompt_text` are real, multiline STRING widgets - together
@@ -1558,6 +1698,11 @@ Outputs:
 - **negative_prompt** (STRING) - `negative_prompt_text`, unchanged.
 
 ## Mykee/Utils - Mykee Model Template
+
+<p align="center">
+  <img src="images/model-template.png" alt="Mykee/Utils - Mykee Model Template">
+</p>
+
 
 Remembers which CLIP / VAE files (and which CLIP type) belong to which
 model, so you don't have to keep that in your head. The node has seven
@@ -1634,6 +1779,11 @@ Outputs (all `*`, they take the type of the widget they are connected to):
   selected entries (nothing for outputs that are not connected).
 
 ## Mykee/Utils - Mykee Seed
+
+<p align="center">
+  <img src="images/seed.png" alt="Mykee/Utils - Mykee Seed">
+</p>
+
 
 A reworked version of the **Seed** node from
 [rgthree-comfy](https://github.com/rgthree/rgthree-comfy) (MIT License,
@@ -1729,6 +1879,12 @@ Outputs:
 
 ## Mykee/Utils - Mykee XYZ Plot / Mykee XYZ Plot Assembler
 
+<p align="center">
+  <img src="images/xyz-plot.png" alt="Mykee/Utils - Mykee XYZ Plot / Mykee XYZ Plot Assembler">
+  <img src="images/xyz-plot-assembler.png" alt="Mykee/Utils - Mykee XYZ Plot / Mykee XYZ Plot Assembler">
+</p>
+
+
 A universal XYZ plot: **any widget parameter of any node** can be an axis
 (cfg, steps, sampler_name, ckpt_name, lora strength, seed, a prompt text,
 a boolean switch, ...). No per-node axis types to pick from a list - you
@@ -1804,6 +1960,11 @@ Notes:
 
 ## Mykee/Prompt - Mykee Text Switch/Batch
 
+<p align="center">
+  <img src="images/text-switch-batch.png" alt="Mykee/Prompt - Mykee Text Switch/Batch">
+</p>
+
+
 Up to 49 numbered text fields on one node, each with a selector at its end.
 
 - **batch_mode** (top switch):
@@ -1840,6 +2001,11 @@ into a field that is not selected does not make anything re-run.
 
 ## Mykee/Prompt - Mykee Before/After Text Injection
 
+<p align="center">
+  <img src="images/before-after-text-injection.png" alt="Mykee/Prompt - Mykee Before/After Text Injection">
+</p>
+
+
 Puts the same text in front of and after many texts at once: every
 **text_N** input comes out on its own **text_N** output as
 
@@ -1866,6 +2032,11 @@ only sockets, so the widgets (before / after texts, separators,
 text_count) cannot be converted to inputs.
 
 ## Mykee/Image - Mykee Stripe Remover
+
+<p align="center">
+  <img src="images/stripe-remover.png" alt="Mykee/Image - Mykee Stripe Remover">
+</p>
+
 
 Removes faint, periodic **horizontal and/or vertical stripes** from an image.
 Built for the banding that DiT image models (Chroma, Flux family, ...) can
@@ -2033,6 +2204,11 @@ those amplify the stripes).
 - Batches are processed image by image, each with its own measurement.
 
 ## Mykee/Latent - Mykee Latent Nyquist Notch
+
+<p align="center">
+  <img src="images/latent-nyquist-notch.png" alt="Mykee/Latent - Mykee Latent Nyquist Notch">
+</p>
+
 
 Removes the component of a **LATENT** that alternates every single latent
 pixel (the Nyquist frequency), before the VAE decode. DiT models that

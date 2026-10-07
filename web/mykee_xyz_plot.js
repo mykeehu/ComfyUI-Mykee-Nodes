@@ -38,7 +38,7 @@ const RANDOM_SEED_MAX = 2 ** 32;
 const MIN_WIDTH = 380;
 const PANEL_GAP = 6; // .mykee-xyz gap
 // Room below the last axis box, so it doesn't touch the node's bottom edge.
-const PANEL_BOTTOM_PADDING = 16;
+const PANEL_BOTTOM_PADDING = 32;
 
 // ---------------------------------------------------------------------------
 // Small helpers
