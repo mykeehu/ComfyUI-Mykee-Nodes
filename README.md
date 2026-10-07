@@ -6,8 +6,10 @@ nodes (merging/ducking, silence trimming, emotion/timbre control,
 voice/accent matching, and general voice clean-up/restoration), StyleGAN
 face-generation/vector nodes, image nodes (color-background
 compositing, basic/advanced image switches, and a stripe remover), a seed node with a
-lockable random seed, a universal XYZ plot, a text switch/batch node, and
-a before/after text injection node (see below for all of these).
+lockable random seed, a group bypasser (one on/off switch per group,
+sortable), a universal XYZ plot, a text switch/batch node,
+a before/after text injection node, and LLM-based prompt nodes (Prompt Advanced,
+Prompt Modifier and the two-stage Prompt Advanced Ultimate) - see below for all of these.
 More Mykee nodes may be added here in the future.
 
 Please note: I am not a programmer, so the code and descriptions for the 
@@ -1697,6 +1699,247 @@ Outputs:
 - **positive_prompt** (STRING) - `positive_prompt_text`, unchanged.
 - **negative_prompt** (STRING) - `negative_prompt_text`, unchanged.
 
+## Mykee/Prompt - Mykee Prompt Advanced
+
+<p align="center">
+  <img src="images/prompt-advanced.png" alt="Mykee Prompt Advanced">
+</p>
+
+A general-purpose chat/instruction node for any text-capable CLIP loader
+(Qwen3, Gemma, ...). It uses the same public API as ComfyUI's own built-in
+"Generate Text" node, but adds an **editable system prompt**, an optional
+**image input** for vision-language (VL) models, and a clean prompt
+passthrough output.
+
+**Two modes:**
+
+- **Text-only** (no image connected): by default the model paraphrases
+  your image-generation prompt back in its own words - handy for catching
+  wording the model reads differently than you intended. If you fill in
+  `system_prompt`, the node runs any other single-turn instruction instead.
+- **Image mode** (image connected + a VL-capable clip): the model describes
+  the image in full, plain, uncensored detail - image type/style, setting,
+  every person (face, hair, pose), clothing, any nudity exactly as shown,
+  camera/lighting, and mood - as flowing English prose. If `prompt` also
+  contains text (a context or a comma-separated list of tags), those words
+  are worked into the description, and where they conflict with what is
+  visible, the prompt wins (e.g. the prompt says "night" -> it is described
+  as night even if the image looks like day). If the connected clip cannot
+  read images, a toast notification says so and the node falls back to
+  text-only mode.
+
+**Important:** the node needs a *generation-capable* chat/VL model. An
+encoder with no LM head wired up in ComfyUI - e.g. Krea 2's own Qwen3-VL
+conditioning encoder - cannot be used here; load a separate chat/VL model
+for this node instead (see
+[ComfyUI issue #14388](https://github.com/Comfy-Org/ComfyUI/issues/14388)).
+
+### Inputs
+
+- **clip** - the text/VL model. For image mode it must be a VL model.
+- **prompt** - the user turn. In image mode it is optional context.
+- **prompt_rewrite** - on by default. Turn it OFF to skip the model call
+  completely (no VRAM load at all): `prompt` just passes through to both
+  outputs, so the node works as a plain text field while the rest of the
+  graph stays wired.
+- **system_prompt** - leave empty for the built-in default (paraphrase /
+  describe the image); fill in to override. You may write `{max_length}`
+  in it, and it is replaced with the current token limit.
+- **max_length** - maximum tokens the model may generate for its answer
+  (default 512). The built-in prompts tell the model this budget so it
+  finishes with a complete sentence instead of being cut off. The limit
+  applies to the *answer only* - the length of the prompt itself is added
+  on top automatically.
+- **sampling_mode** - ON: sampling with the settings below (varied
+  results, reroll with a new seed). OFF: greedy decoding - always the most
+  likely token, fully deterministic; the knobs below and the seed are
+  ignored.
+- **seed, temperature, top_k, top_p, min_p, repetition_penalty,
+  presence_penalty** - the usual sampling controls, with the same
+  defaults/ranges as ComfyUI's own "Generate Text" node.
+- **thinking** - lets a thinking-capable model reason in a
+  `<think>...</think>` block first, if the model/tokenizer supports it.
+  The block is always stripped from the output.
+- **unload_after_run** - frees this clip from VRAM right after generating,
+  without touching any other model loaded in the workflow (e.g. your
+  diffusion model). It is reloaded automatically next time. Useful for
+  large chat models you only need briefly.
+- **image** (optional) - switches the node into image-description mode.
+
+### Outputs
+
+- **prompt** - the original prompt, unchanged, so the node can sit inline
+  before a text encoder without breaking the chain.
+- **reason_text** - the model's response. It is also shown in a read-only
+  text box at the bottom of the node after each run.
+
+### Credits
+
+The technique of inserting the image placeholder token by hand (needed
+because a hand-built chat text skips the tokenizer's own template) follows
+silveroxides' *Text Generate Qwen3.5 (System Prompt)* node in
+[ComfyUI-UtilsCollection](https://github.com/silveroxides/ComfyUI-UtilsCollection).
+The VRAM-unload technique follows SeanScripts'
+[ComfyUI-Unload-Model](https://github.com/SeanScripts/ComfyUI-Unload-Model).
+
+## Mykee/Prompt - Mykee Prompt Advanced - Prompt Modifier
+
+<p align="center">
+  <img src="images/prompt-advanced-prompt-modifier.png" alt="Mykee Prompt Advanced - Prompt Modifier">
+</p>
+
+The "edit" sibling of **Mykee Prompt Advanced**. Instead of paraphrasing a
+prompt or describing an image from scratch, it takes an **existing prompt
+(or image)** plus a separate **edit_instruction**, and rewrites *only the
+details the instruction addresses* - everything else (wording, structure,
+language, length) stays as close to untouched as possible. It also
+resolves contradictions the edit creates elsewhere: e.g. if the
+instruction puts a piece of clothing back on, anything that only makes
+sense with it off is fixed too, not left dangling.
+
+**Two modes:**
+
+- **Text-only** (no image): `prompt` is edited surgically according to
+  `edit_instruction`, keeping its original form - tag list stays a tag
+  list, prose stays prose, same language, same length - and only the parts
+  the instruction touches change.
+- **Image mode** (image + VL-capable clip): the model first works out
+  internally exactly what the image shows, then writes a prose description
+  of **that same scene with the edit applied**. The two-step approach is
+  deliberate: a single "describe this image and also apply this edit"
+  instruction proved unreliable at actually taking the edit into account.
+  If `edit_instruction` is empty, the image is simply described as-is.
+  Here `prompt` is optional extra context.
+
+### Inputs
+
+- **clip** - text/VL model (VL needed for image mode; must be
+  generation-capable, see Mykee Prompt Advanced).
+- **edit_instruction** - the change(s) to make, in plain language.
+- **prompt** - the prompt to edit (text mode), or optional context (image
+  mode).
+- **prompt_rewrite** - OFF: no model call, no VRAM load; `prompt` passes
+  through unchanged to both outputs.
+- **system_prompt** - empty = built-in default (surgical edit / understand
+  then re-describe with the edit applied). Fill in to override;
+  `{max_length}` is replaced with the token limit.
+- **max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
+  repetition_penalty, presence_penalty, thinking, unload_after_run** - the
+  same as in Mykee Prompt Advanced (same defaults).
+- **image** (optional) - switches the node into image-edit mode.
+
+### Outputs
+
+- **prompt** - the original prompt, unchanged (so the node can sit inline
+  in a chain).
+- **edited_prompt** - the rewritten prompt / description. Also shown in a
+  read-only text box on the node after each run.
+
+## Mykee/Prompt - Mykee Prompt Advanced Ultimate
+
+<p align="center">
+  <img src="images/prompt-advanced-ultimate.png" alt="Mykee Prompt Advanced Ultimate">
+</p>
+
+A merged, **two-stage** version of Mykee Prompt Advanced and the Prompt
+Modifier, built around one idea: **first write out a detailed description,
+then answer a question about it / edit it - from the text alone.**
+
+Why two stages? On non-thinking VL models a single "describe the image
+*and* answer this question about it" instruction is unreliable: the model
+commits to a quick, statistically typical answer before it has actually
+looked at the fine details, and there is no hidden reasoning to catch the
+mistake afterwards - the generated tokens *are* the only reasoning. Splitting
+the job forces stage 1 to write the visual evidence down as real, visible
+text; stage 2 then works purely from that text (it never sees the image
+again), where a "check for consistency" instruction has something concrete
+to check against.
+
+### Stage 1 - description
+
+- **Image connected**: a full, highly detailed prose description. If
+  `prompt` contains a specific question or focus, the default system prompt
+  tells the model to explicitly confirm *or rule out* every detail relevant
+  to it - including saying clearly when something is **not** present, which
+  a plain "describe the image" instruction tends to skip.
+- **No image**: paraphrases `prompt` back (like Mykee Prompt Advanced).
+
+### Stage 2 - answer / edit (always text-only)
+
+Runs only if **second_stage_enabled** is ON (default) **and**
+`second_prompt` is not empty. Otherwise it is skipped and `response_2`
+simply mirrors `response_1`.
+
+The model receives stage 1's result as plain text plus `second_prompt`,
+and works strictly from that. **second_mode** picks what that means:
+
+- **analyze** (default) - `second_prompt` is a *question* about stage 1's
+  result ("RESPONSE 1"); stage 2 answers it.
+- **edit** - `second_prompt` is an *edit instruction*; stage 2 rewrites the
+  stage-1 text accordingly, the same way as Prompt Modifier does (a short
+  analysis/plan first, then only the part after the `===FINAL===` marker is
+  used as `response_2`).
+
+The built-in stage-2 prompt follows `second_mode`. If you write your own
+`second_system_prompt`, refer to the labels the mode uses: "RESPONSE 1"
+(analyze) or "PROMPT" / "EDIT INSTRUCTION" (edit).
+
+Both stages share the same `clip`, loaded once. Each stage has its **own
+independent controls**, because a long, varied description and a short,
+deterministic answer usually want different settings.
+
+### Tags
+
+With **generate_tags** ON, stage 1 is additionally asked for an
+e621-style comma-separated tag list below a `===TAGS===` marker line,
+after the description. **max_tags** (2-100, default 20) limits the length;
+the model is told not to pad the list with "absence" tags ("no bra",
+"no jewelry", ...) just to reach that count. `response_1` always keeps the
+full raw text (description + marker + tags); the tag list is also split out
+into its own `tags_1` output. (If you use a custom `system_prompt` without
+the marker, `tags_1` stays empty.)
+
+### Inputs
+
+- **clip, image** - as in Mykee Prompt Advanced. The image is used by
+  stage 1 only.
+- **prompt** - stage 1's user turn (a question/focus/context in image mode;
+  the text to paraphrase in text-only mode).
+- **prompt_rewrite** - master switch. OFF: no model calls for either
+  stage, everything passes through, no VRAM load.
+- **system_prompt** - stage 1's system prompt (empty = built-in default).
+- **generate_tags, max_tags** - see above.
+- **max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
+  repetition_penalty, presence_penalty, thinking** - stage 1's generation
+  controls (same meaning as in Mykee Prompt Advanced).
+- **second_stage_enabled, second_mode, second_prompt,
+  second_system_prompt** - stage 2 settings, see above.
+- **second_max_length, second_sampling_mode, second_seed,
+  second_seed_control, second_temperature, second_top_k, second_top_p,
+  second_min_p, second_repetition_penalty, second_presence_penalty,
+  second_thinking** - stage 2's own generation controls.
+  **second_seed_control** (fixed / increment / decrement / randomize) is
+  the node's own equivalent of ComfyUI's *control after generate*: after
+  each run it updates `second_seed` for the next one.
+- **unload_after_run** - frees `clip` from VRAM once, after both stages
+  have finished.
+
+### Outputs
+
+- **prompt_1** - stage 1's input prompt, unchanged.
+- **prompt_2** - `second_prompt`, unchanged (whether or not stage 2 ran).
+- **response_1** - stage 1's full, unsplit result (including the
+  `===TAGS===` marker and tag list, if generated).
+- **response_2** - stage 2's result, or a copy of `response_1` if stage 2
+  was skipped.
+- **tags_1** - only the tag list from `response_1`. Empty if
+  `generate_tags` is off.
+
+`response_1`, `response_2` and `tags_1` are also shown in read-only text
+boxes at the bottom of the node after each run, so you can check them
+without wiring the outputs anywhere. Editing those boxes has no effect -
+they are overwritten on the next run.
+
 ## Mykee/Utils - Mykee Model Template
 
 <p align="center">
@@ -1777,6 +2020,71 @@ Outputs (all `*`, they take the type of the widget they are connected to):
 
 - **model**, **clip_type**, **clip_1**, **clip_2**, **clip_3**, **vae**, **vae_2** - the
   selected entries (nothing for outputs that are not connected).
+
+## Mykee/Utils - Mykee Group Bypasser
+
+<p align="center">
+  <img src="images/group-bypasser.png" alt="Mykee Group Bypasser">
+</p>
+
+A frontend-only (virtual) node that shows **one on/off switch per Group**
+in the current workflow. Flipping a switch sets every node inside that
+group to *Always* (ON) or *Bypass* (OFF) - so you can enable/disable whole
+sections of a workflow (e.g. "Upscale", "Face detail", "Audio clean-up")
+from a single place, without hunting for each group on the canvas.
+
+The node has no inputs or outputs and never runs on the Python side; it
+is skipped entirely when the workflow is converted into an API prompt,
+so it adds nothing to the execution.
+
+### How it works
+
+- Every group in the graph gets a row with its title and a switch. A
+  node counts as being "in" a group when its center lies inside the
+  group's rectangle.
+- A switch is shown as OFF only when **all** nodes in the group are
+  bypassed. Each row re-syncs itself regularly, so if you change a
+  group's nodes some other way (the group's own header switch, another
+  bypasser node, a manual Bypass), the switch follows.
+- Groups added, renamed, moved or deleted are picked up automatically.
+  The right-click menu also has a **Refresh** item.
+- Colors follow whatever ComfyUI color theme (dark/light/custom) is
+  active.
+
+### Sorting the switches
+
+The order of the switches can be set with the **sort** widget on the
+node:
+
+- **Position (top to bottom)** (default) - by the group's place on the
+  canvas: top to bottom, then left to right.
+- **Execution order** - groups are ranked by the earliest node they
+  contain, in ComfyUI's own execution order. So the switches come in the
+  order the workflow actually runs.
+- **Manual order** - a fully free order. A drag handle appears on the
+  left of each row: grab it and drag the row to its new place; the other
+  rows slide smoothly aside. The order is stored in the workflow and
+  survives saving/loading (groups identified by their title). To go back,
+  right-click the node -> **Clear manual order (revert to Position)**.
+
+In **Position** and **Execution order** mode a group nested inside
+another group is always listed right after its (closest) parent group.
+Manual mode ignores nesting - it is a flat list.
+
+### Copy button
+
+The copy icon in the node's title bar copies every currently **active**
+(non-bypassed) group listed here - together with all the nodes inside
+them - to the clipboard, in ComfyUI's own copy/paste format. You can
+paste it straight into another workflow with Ctrl+V. The icon briefly
+turns into a check mark when the copy succeeded.
+
+### Notes
+
+- Group titles are used to identify groups (for the manual order), so
+  give your groups unique names.
+- Because the switch works on the nodes' mode, it overrides whatever
+  Bypass/Always state those nodes had before.
 
 ## Mykee/Utils - Mykee Seed
 
