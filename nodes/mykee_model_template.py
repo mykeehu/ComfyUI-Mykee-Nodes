@@ -15,7 +15,14 @@ same idea as the Mykee XYZ Plot axes, but with one fixed value per output.
 
 A "template" is one small JSON file with the current selection:
 
-    {"version": 1, "model": "...", "clip_type": "...", "clip_1": "...", "clip_2": "...", "vae": "..."}
+    {"version": 1, "model": "...", "clip_type": "...", "clip_1": "...", "clip_2": "...", "vae": "...", "notes": "..."}
+
+"notes" is the optional free-text / Markdown "Template Notes" field shown at
+the bottom of the node (a README-like description of the template). It is
+stored as a normal JSON string, so newlines, quotes, backslashes and
+non-ASCII characters (Hungarian accents, emoji, ...) are escaped / encoded
+by the JSON layer; files are always written as UTF-8 and read as UTF-8
+(UTF-8 with BOM and, as a last resort, cp1250 files are tolerated too).
 
 Only the outputs that are connected are saved. When a template is loaded,
 every entry is checked against the list of the widget that output is
@@ -70,6 +77,7 @@ DEFAULT_TEMPLATES_SUBPATH = os.path.join("user", "default", "Model templates")
 # Output slots, in output order. The JS side uses the same names.
 SLOTS = ("model", "clip_type", "clip_1", "clip_2", "clip_3", "vae", "vae_2")
 TEMPLATE_VERSION = 1
+MAX_NOTES_CHARS = 200_000
 
 
 class AnyType(str):
@@ -145,28 +153,57 @@ def _clean_values(data):
     return values
 
 
+def _clean_notes(data):
+    """Returns the 'notes' string of a template dict ('' if missing).
+
+    Line endings are normalised to LF, NUL characters are dropped and
+    characters that can't be encoded as UTF-8 (lone surrogates from the
+    browser) are replaced, so the file can always be written."""
+    notes = data.get("notes") if isinstance(data, dict) else None
+    if not isinstance(notes, str):
+        return ""
+    notes = notes.replace("\r\n", "\n").replace("\r", "\n").replace("\x00", "")
+    notes = notes.encode("utf-8", "replace").decode("utf-8")
+    return notes[:MAX_NOTES_CHARS]
+
+
+def _read_json_file(path):
+    """Reads a JSON file as UTF-8 (BOM tolerated). A file that was edited and
+    saved in a legacy Windows code page falls back to cp1250 (Central
+    European), so accented text isn't lost."""
+    with open(path, "rb") as f:
+        raw = f.read()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text = raw.decode("cp1250", "replace")
+    return json.loads(text)
+
+
 def _load_template(directory, name):
-    """Returns {slot: file name} (only the slots present in the file) or
-    None if the file doesn't exist / can't be read."""
+    """Returns {"values": {slot: file name}, "notes": str} (only the slots
+    present in the file) or None if the file doesn't exist / can't be read."""
     p = _template_path(directory, name)
     if not os.path.isfile(p):
         return None
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = _read_json_file(p)
         if not isinstance(data, dict):
             return None
-        return _clean_values(data)
+        return {"values": _clean_values(data), "notes": _clean_notes(data)}
     except Exception:
         return None
 
 
-def _save_template(directory, name, values):
+def _save_template(directory, name, values, notes=""):
     p = _template_path(directory, name)
     tmp = p + ".tmp"
     payload = {"version": TEMPLATE_VERSION}
     payload.update(_clean_values(values))
-    with open(tmp, "w", encoding="utf-8") as f:
+    notes = _clean_notes({"notes": notes})
+    if notes.strip():
+        payload["notes"] = notes
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
     os.replace(tmp, p)
 
@@ -253,12 +290,12 @@ try:
         if not name:
             return _aiohttp_web.json_response({"error": "name is required"}, status=400)
         directory = _templates_dir(request.query.get("path", ""))
-        values = _load_template(directory, name)
-        if values is None:
+        loaded = _load_template(directory, name)
+        if loaded is None:
             return _aiohttp_web.json_response(
                 {"error": f"No readable '{name}.json' found in {directory}"}, status=404
             )
-        return _aiohttp_web.json_response({"name": name, "values": values})
+        return _aiohttp_web.json_response({"name": name, "values": loaded["values"], "notes": loaded["notes"]})
 
     @_routes.post("/mykee/model_templates/save")
     async def _mykee_mt_save(request):
@@ -270,11 +307,14 @@ try:
         if not name:
             return _aiohttp_web.json_response({"error": "name is required"}, status=400)
         values = _clean_values(data.get("values"))
-        if not values:
-            return _aiohttp_web.json_response({"error": "nothing to save - no connected output has a value"}, status=400)
+        notes = _clean_notes(data)
+        if not values and not notes.strip():
+            return _aiohttp_web.json_response(
+                {"error": "nothing to save - no connected output has a value and the notes are empty"}, status=400
+            )
         directory = _templates_dir(data.get("path", ""))
         try:
-            _save_template(directory, name, values)
+            _save_template(directory, name, values, notes)
         except Exception as e:
             return _aiohttp_web.json_response({"error": str(e)}, status=400)
         return _aiohttp_web.json_response({

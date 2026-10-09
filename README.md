@@ -1968,6 +1968,34 @@ Templates are one small JSON file each, with the selection of the
 {"version": 1, "model": "sdxl/mymodel.safetensors", "clip_type": "stable_diffusion", "clip_1": "clip_l.safetensors", "vae": "sdxl_vae.safetensors"}
 ```
 
+Template Notes
+--------------
+
+At the bottom of the node there is a **Template Notes** field for a
+description of the template (what the model needs, recommended
+settings, links, ...). It takes plain text or Markdown, like a `README.md`:
+
+- Text that uses Markdown (headings, lists, tables, `**bold**`, `` `code` ``,
+  code blocks, quotes, task lists, `[links](https://...)`) is shown
+  **formatted**; anything else is shown as plain text. The small tag in the
+  header tells which one was detected.
+- Click **✏ Edit** (or double-click the text) to edit; **👁 View** (or
+  leaving the field) switches back. An empty field opens in edit mode.
+- The field grows and shrinks with the text, both while typing and when a
+  workflow or template is loaded. Very long notes scroll inside the box.
+- The notes are saved in the template JSON as a `"notes"` string and stored
+  in the workflow. Newlines, quotes, backslashes and accented characters
+  are JSON-escaped; files are always written and read as UTF-8 (a file
+  re-saved in cp1250 by an editor is still read correctly).
+- Loading a template always replaces the notes: with the template's notes,
+  or with an empty field if it has none. A template can be saved with notes
+  only, even if no output is connected.
+- Notes never reach the backend, so editing them does not re-run the node.
+
+```json
+{"version": 1, "model": "sdxl/mymodel.safetensors", "vae": "sdxl_vae.safetensors", "notes": "# My model\n\n- CFG 5-7\n- use **euler**"}
+```
+
 Storage location:
 
 - By default, `ComfyUI/user/default/Model templates/`.
