@@ -1968,8 +1968,7 @@ Templates are one small JSON file each, with the selection of the
 {"version": 1, "model": "sdxl/mymodel.safetensors", "clip_type": "stable_diffusion", "clip_1": "clip_l.safetensors", "vae": "sdxl_vae.safetensors"}
 ```
 
-Template Notes
---------------
+### Template Notes
 
 At the bottom of the node there is a **Template Notes** field for a
 description of the template (what the model needs, recommended
@@ -1996,7 +1995,7 @@ settings, links, ...). It takes plain text or Markdown, like a `README.md`:
 {"version": 1, "model": "sdxl/mymodel.safetensors", "vae": "sdxl_vae.safetensors", "notes": "# My model\n\n- CFG 5-7\n- use **euler**"}
 ```
 
-Storage location:
+### Storage location
 
 - By default, `ComfyUI/user/default/Model templates/`.
 - If `custom_path` is filled in, that folder is used instead (created if
@@ -2018,7 +2017,7 @@ skipped (and why). Folder separators don't matter when matching
 (`sub\model.safetensors` from Windows matches `sub/model.safetensors`
 on Linux), and a different upper/lower case is tolerated as a fallback.
 
-Picker and buttons (same as in Mykee Prompt Template):
+### Picker and buttons (same as in Mykee Prompt Template)
 
 - **Existing templates** (dropdown) - picking an entry loads it
   immediately. There's no separate Load button.
