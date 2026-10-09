@@ -26,6 +26,35 @@ const DISPLAY_WIDGET_NAMES = ["response_1_display", "response_2_display", "tags_
 // deliberate case: see the comment where they're created.
 const SEED_SYNC_KEY = "second_seed";
 
+
+// The display widgets are client-side only (serialize = false, so they never
+// reach the cache key), which also means ComfyUI doesn't save their text in
+// the workflow - switching to another workflow tab and back rebuilds the
+// node with empty boxes. The last result is therefore also kept in
+// node.properties: that is saved with the workflow, but it is not a widget
+// (no widgets_values position shift) and not a backend input (no re-run).
+const STORE_KEY = "mykee_display";
+
+function rememberDisplay(node, name, value) {
+    node.properties = node.properties || {};
+    const store = node.properties[STORE_KEY] && typeof node.properties[STORE_KEY] === "object" ? node.properties[STORE_KEY] : {};
+    store[name] = value;
+    node.properties[STORE_KEY] = store;
+}
+
+function restoreDisplay(node, names) {
+    const store = node.properties?.[STORE_KEY];
+    if (!store || typeof store !== "object") return;
+    for (const name of names) {
+        const value = store[name];
+        if (typeof value !== "string") continue;
+        const w = node.widgets?.find((w) => w.name === name);
+        if (!w) continue;
+        w.value = value;
+        if (w.inputEl) w.inputEl.value = value;
+    }
+}
+
 app.registerExtension({
     name: "Mykee.PromptAdvancedUltimate",
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
@@ -66,6 +95,14 @@ app.registerExtension({
         // After execution, the backend sends response_1/response_2/tags_1
         // and the next second_seed value back via the "ui" dict - write
         // them into the matching widgets.
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function () {
+            const ret = onConfigure ? onConfigure.apply(this, arguments) : undefined;
+            // properties are restored by now; the widgets exist since onNodeCreated.
+            restoreDisplay(this, DISPLAY_WIDGET_NAMES);
+            return ret;
+        };
+
         const onExecuted = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             onExecuted?.apply(this, arguments);
@@ -74,6 +111,7 @@ app.registerExtension({
                 const value = message?.[name]?.[0];
                 if (value === undefined) continue;
 
+                rememberDisplay(this, name, value);
                 const w = this.widgets?.find((w) => w.name === name);
                 if (!w) continue;
 
