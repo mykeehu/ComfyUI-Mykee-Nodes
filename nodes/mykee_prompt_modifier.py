@@ -206,7 +206,10 @@ TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "Only the text after the ===FINAL=== line will be used as the "
     "result, so it must stand completely on its own as the finished "
     "revised PROMPT - no comments, questions, or headers before or "
-    "after it. Keep your entire response under {max_length} tokens, "
+    "after it. Your entire response "
+    "must be in English regardless of what language the edit "
+    "instruction or image context is in. "
+    "Keep your entire response under {max_length} tokens, "
     "and make sure the part after ===FINAL=== ends as a complete "
     "sentence - do not run out of room mid-way."
 )
