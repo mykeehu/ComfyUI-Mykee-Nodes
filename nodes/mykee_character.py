@@ -251,9 +251,43 @@ def _require_cv2():
         )
 
 
-def _select_face(faces, which_face):
+def _select_face(faces, which_face, face_index=0, image_size=None):
     """Shared 'which face to pick among several detections' logic - used by
-    both MykeeFaceDetectAlignCrop and MykeeIdentityCompare."""
+    both MykeeFaceDetectAlignCrop and MykeeIdentityCompare.
+
+    Corner options (top_left / top_right / bottom_left / bottom_right) pick
+    the face lying closest to that corner of the image, using a diagonal
+    score on the face centers normalised by the image size. This lets you
+    tell apart faces that share almost the same x (e.g. two faces stacked
+    vertically on a character sheet) or the same y, which the single-axis
+    options (leftmost/rightmost/topmost/bottommost) cannot do.
+
+    x_order / y_order sort ALL faces along one axis and pick the one at
+    face_index (0-based; clamped to the last face), so you can step through
+    the detections one by one."""
+    def cx(f):
+        return f[0] + f[2] / 2.0
+
+    def cy(f):
+        return f[1] + f[3] / 2.0
+
+    if which_face in ("top_left", "top_right", "bottom_left", "bottom_right"):
+        if image_size:
+            iw, ih = float(image_size[0]), float(image_size[1])
+        else:
+            iw = max(f[0] + f[2] for f in faces) or 1.0
+            ih = max(f[1] + f[3] for f in faces) or 1.0
+        sx = 1.0 if which_face.endswith("right") else -1.0
+        sy = 1.0 if which_face.startswith("bottom") else -1.0
+        return max(faces, key=lambda f: sx * cx(f) / iw + sy * cy(f) / ih)
+    if which_face in ("x_order", "y_order"):
+        key = cx if which_face == "x_order" else cy
+        # secondary key = the other axis, so near-equal coordinates still
+        # get a stable, predictable order
+        other = cy if which_face == "x_order" else cx
+        ordered = sorted(faces, key=lambda f: (key(f), other(f)))
+        idx = max(0, min(int(face_index), len(ordered) - 1))
+        return ordered[idx]
     if which_face == "largest":
         return max(faces, key=lambda f: f[2] * f[3])
     if which_face == "leftmost":
@@ -480,14 +514,23 @@ class MykeeFaceDetectAlignCrop:
                 }),
                 "crop_size": ("INT", {"default": 768, "min": 128, "max": 2048, "step": 8}),
                 "which_face": (
-                    ["highest_score", "largest", "leftmost", "rightmost", "topmost", "bottommost"],
+                    [
+                        "highest_score", "largest", "leftmost", "rightmost", "topmost", "bottommost",
+                        "top_left", "top_right", "bottom_left", "bottom_right",
+                        "x_order", "y_order",
+                    ],
                     {
                         "default": "highest_score",
                         "tooltip": (
                             "Which face to pick when several are found (e.g. a two-person image). "
-                            "'leftmost'/'rightmost': the face on the left/right side of the image "
-                            "(by face-center x-coordinate) - useful when the prompt also "
-                            "distinguishes people as 'the person on the left', etc."
+                            "'leftmost'/'rightmost'/'topmost'/'bottommost': the face furthest "
+                            "toward that side (by face-center coordinate). "
+                            "'top_left'/'top_right'/'bottom_left'/'bottom_right': the face "
+                            "closest to that corner - use these when faces share almost the same "
+                            "x or y (e.g. two faces stacked on the right side of a character sheet). "
+                            "'x_order'/'y_order': sort all faces left-to-right / top-to-bottom and "
+                            "pick the one at face_index, so you can step through the detections "
+                            "(0 = first). The num_faces_found output tells you how many there are."
                         ),
                     },
                 ),
@@ -575,6 +618,18 @@ class MykeeFaceDetectAlignCrop:
                         ),
                     },
                 ),
+                "face_index": (
+                    "INT",
+                    {
+                        "default": 0, "min": 0, "max": 99, "step": 1,
+                        "tooltip": (
+                            "Only used when which_face is 'x_order' or 'y_order': the 0-based "
+                            "position of the face in the left-to-right / top-to-bottom ordering "
+                            "(0 = first). Values past the last face are clamped to the last one; "
+                            "check num_faces_found for the count."
+                        ),
+                    },
+                ),
             }
         }
 
@@ -583,7 +638,7 @@ class MykeeFaceDetectAlignCrop:
     FUNCTION = "run"
     CATEGORY = "Mykee/Character"
 
-    def run(self, image, model_file, crop_factor, crop_size, which_face, mask_feather, score_threshold, edge_fill, min_face_size_pct, mask_offset_x_pct, mask_offset_y_pct, mask_grow_pct, ffhq_crop_size):
+    def run(self, image, model_file, crop_factor, crop_size, which_face, mask_feather, score_threshold, edge_fill, min_face_size_pct, mask_offset_x_pct, mask_offset_y_pct, mask_grow_pct, ffhq_crop_size, face_index=0):
         _require_cv2()
         model_path = _resolve_model_path(model_file)
         if not os.path.isfile(model_path):
@@ -601,7 +656,7 @@ class MykeeFaceDetectAlignCrop:
             raise RuntimeError("No face found in the image (try lowering score_threshold or min_face_size_pct).")
 
         num_faces_found = len(faces)
-        face = _select_face(faces, which_face)
+        face = _select_face(faces, which_face, face_index, image_size=(w, h))
 
         x, y, fw, fh = face[0:4]
         score = float(face[-1])

@@ -206,6 +206,20 @@ now also select by position, not just `highest_score`/`largest`:
 distinguishes people as "the person on the left", and you need to know
 which generated face belongs to whom (e.g. before Identity Score-ing).
 
+For layouts where faces share almost the same x or y (e.g. a character
+sheet with front / side / back views plus two faces stacked on the right),
+the single-axis options are not enough, so there are more:
+
+- `top_left` / `top_right` / `bottom_left` / `bottom_right` - the face
+  closest to that corner of the image (diagonal score on the face centers,
+  normalised by image size). On such a sheet, `top_right` and
+  `bottom_right` pick the upper and lower stacked face.
+- `x_order` / `y_order` + **`face_index`** - sorts ALL detected faces
+  left-to-right / top-to-bottom and picks the one at `face_index`
+  (0 = first), so you can step through the detections one by one. An index
+  past the last face is clamped to the last one; `num_faces_found` tells
+  you the count.
+
 **`min_face_size_pct`** - before `which_face`'s position-based selection
 (leftmost/rightmost/etc.) runs, this filters out detections that are too
 small relative to the largest detected face. Without it, a false-positive,
@@ -1968,7 +1982,8 @@ Templates are one small JSON file each, with the selection of the
 {"version": 1, "model": "sdxl/mymodel.safetensors", "clip_type": "stable_diffusion", "clip_1": "clip_l.safetensors", "vae": "sdxl_vae.safetensors"}
 ```
 
-### Template Notes
+Template Notes
+--------------
 
 At the bottom of the node there is a **Template Notes** field for a
 description of the template (what the model needs, recommended
@@ -1995,7 +2010,7 @@ settings, links, ...). It takes plain text or Markdown, like a `README.md`:
 {"version": 1, "model": "sdxl/mymodel.safetensors", "vae": "sdxl_vae.safetensors", "notes": "# My model\n\n- CFG 5-7\n- use **euler**"}
 ```
 
-### Storage location
+Storage location:
 
 - By default, `ComfyUI/user/default/Model templates/`.
 - If `custom_path` is filled in, that folder is used instead (created if
@@ -2017,7 +2032,7 @@ skipped (and why). Folder separators don't matter when matching
 (`sub\model.safetensors` from Windows matches `sub/model.safetensors`
 on Linux), and a different upper/lower case is tolerated as a fallback.
 
-### Picker and buttons (same as in Mykee Prompt Template)
+Picker and buttons (same as in Mykee Prompt Template):
 
 - **Existing templates** (dropdown) - picking an entry loads it
   immediately. There's no separate Load button.
