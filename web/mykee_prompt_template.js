@@ -101,6 +101,20 @@ app.registerExtension({
             return ret;
         };
 
+        // Switching to another workflow tab and back rebuilds the graph: each
+        // node is created first (onNodeCreated, with DEFAULT widget values -
+        // so custom_path is still empty and the list is read from the default
+        // folder) and only THEN configured with the saved widget values. The
+        // list therefore has to be re-read here, after custom_path has been
+        // restored, otherwise it stays empty / from the wrong folder until
+        // Reload is pressed by hand.
+        const onConfigure = nodeType.prototype.onConfigure;
+        nodeType.prototype.onConfigure = function () {
+            const ret = onConfigure ? onConfigure.apply(this, arguments) : undefined;
+            if (this._mykeeRefreshTemplateList) this._mykeeRefreshTemplateList();
+            return ret;
+        };
+
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const ret = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
@@ -148,20 +162,47 @@ app.registerExtension({
             // so a stale pick shouldn't persist across page reloads.
             listWidget.serialize = false;
 
-            const refreshList = async () => {
+            // Guards against out-of-order responses: if two refreshes are in
+            // flight (e.g. one fired at node creation with the default path,
+            // another after the saved custom_path was restored), only the
+            // newest one is allowed to update the list.
+            let refreshSeq = 0;
+            const refreshList = async (retriesLeft = 2) => {
+                const seq = ++refreshSeq;
                 try {
                     const data = await fetchJSON(
                         `/mykee/prompt_templates/list?path=${encodeURIComponent(currentPath())}`
                     );
-                    existingNames = data.templates || [];
+                    if (seq !== refreshSeq) return existingNames;
+                    // Update the SAME array in place, so any reference the
+                    // frontend may hold to options.values stays valid.
+                    existingNames.length = 0;
+                    existingNames.push(...(data.templates || []));
                     if (listWidget.options) listWidget.options.values = existingNames;
+                    this.setDirtyCanvas(true, true);
                     return existingNames;
                 } catch (e) {
                     console.warn("Mykee Prompt Template: couldn't fetch template list", e);
+                    // The server may not be fully ready right after a page
+                    // load / workflow switch - try again shortly.
+                    if (seq === refreshSeq && retriesLeft > 0) {
+                        setTimeout(() => refreshList(retriesLeft - 1), 1000);
+                    }
                     return existingNames;
                 }
             };
             this._mykeeRefreshTemplateList = refreshList;
+
+            // Re-read the list whenever custom_path changes, so the picker
+            // never shows templates from a stale folder.
+            if (pathWidget) {
+                const origPathCallback = pathWidget.callback;
+                pathWidget.callback = function () {
+                    const r = origPathCallback ? origPathCallback.apply(this, arguments) : undefined;
+                    refreshList();
+                    return r;
+                };
+            }
 
             const newBtn = this.addWidget("button", "🆕 New", null, () => {
                 nameWidget.value = "";
