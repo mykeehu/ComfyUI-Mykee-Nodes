@@ -1697,6 +1697,17 @@ Picker and buttons:
 Unlike the StyleGAN Vector Save node, none of this needs the graph to
 run - Save fires its REST call immediately, with no "armed"/queue step.
 
+**Show Negative Prompt switch** (`show_negative_prompt`, off by default):
+most prompts today don't use a negative prompt, and an empty box just
+wastes space. While the switch is off, the negative prompt box is hidden
+and the positive prompt box grows into the freed space; the
+`negative_prompt` output is an empty string and Save stores an empty
+negative prompt. Turning it on shows the negative box again (the two
+boxes share the node's height). Loading a template that has a negative
+prompt turns the switch on automatically, so it is never loaded
+invisibly. Workflows saved before the switch existed come back with it
+on if they contained a negative prompt.
+
 Inputs:
 
 - **template_name** (STRING) - name for this template; also its file
@@ -1707,11 +1718,14 @@ Inputs:
 - **negative_prompt_text** (STRING, multiline) - the negative prompt
   text.
 - **custom_path** (STRING) - optional folder override, see above.
+- **show_negative_prompt** (BOOLEAN, default off) - show the negative
+  prompt box; see above.
 
 Outputs:
 
 - **positive_prompt** (STRING) - `positive_prompt_text`, unchanged.
-- **negative_prompt** (STRING) - `negative_prompt_text`, unchanged.
+- **negative_prompt** (STRING) - `negative_prompt_text`, unchanged -
+  or an empty string while `show_negative_prompt` is off.
 
 ## Mykee/Prompt - Mykee Prompt Advanced
 

@@ -47,10 +47,19 @@ Inputs:
   custom_path           - optional. Folder to use instead of the
                           default ComfyUI/user/default/Prompt
                           templates location.
+  show_negative_prompt  - off by default. When off, the JS hides the
+                          negative prompt box (the positive one grows to
+                          use the freed space) and the negative_prompt
+                          output is an empty string. When on, both boxes
+                          are shown and both outputs carry their text.
+                          Kept as the LAST required input on purpose, so
+                          workflows saved before this switch existed keep
+                          their widget values in the same positions.
 
 Outputs:
   positive_prompt - positive_prompt_text, unchanged.
-  negative_prompt - negative_prompt_text, unchanged.
+  negative_prompt - negative_prompt_text, unchanged - or "" while
+                    show_negative_prompt is off.
 """
 
 import json
@@ -200,6 +209,13 @@ class MykeePromptTemplate:
                                "saved from this folder instead of the default "
                                "ComfyUI/user/default/Prompt templates.",
                 }),
+                "show_negative_prompt": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Show the negative prompt box. When off, the "
+                               "box is hidden (the positive prompt gets the "
+                               "extra space) and the negative_prompt output "
+                               "is empty.",
+                }),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
@@ -209,7 +225,11 @@ class MykeePromptTemplate:
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
 
-    def run(self, template_name, positive_prompt_text, negative_prompt_text, custom_path, unique_id=None):
+    def run(self, template_name, positive_prompt_text, negative_prompt_text, custom_path,
+            show_negative_prompt=False, unique_id=None):
+        # A hidden negative box must not silently feed stale text downstream.
+        if not show_negative_prompt:
+            negative_prompt_text = ""
         return (positive_prompt_text, negative_prompt_text)
 
 

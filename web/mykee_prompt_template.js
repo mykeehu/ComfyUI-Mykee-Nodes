@@ -27,6 +27,19 @@ import { api } from "../../scripts/api.js";
  *     Windows and Linux - the widget is updated to match whatever name
  *     actually got used, in case it had to change).
  *
+ * "show_negative_prompt" (off by default) decides whether the negative
+ * box is visible at all - most prompts today don't use one, and an empty
+ * box just wastes space:
+ *
+ *   - off: negative_prompt_text is hidden, the positive box takes over
+ *     the freed height, and the node's negative output is empty (the
+ *     Python side enforces that, so hidden stale text never leaks out).
+ *     Save then stores an empty negative prompt too.
+ *   - on: both boxes are shown and share the node's height.
+ *   - Loading a template that has a negative prompt switches it on, so
+ *     the text is never loaded invisibly. Workflows saved before this
+ *     switch existed come back with it on if they held a negative prompt.
+ *
  * Unlike the StyleGAN Vector Save node, none of this needs the graph to
  * run - there's no "armed" gate here, Save just fires the REST call
  * immediately.
@@ -58,6 +71,47 @@ function enforceMinWidth(node) {
 }
 
 const NODE_NAME = "MykeePromptTemplate";
+
+// Default node size for a freshly added node (negative box hidden, so the
+// positive prompt gets a comfortable height right away).
+const DEFAULT_NODE_HEIGHT = 400;
+
+// Shows/hides a widget (incl. its DOM textarea) and makes litegraph reserve
+// no row for it while hidden. The original type/size hooks are remembered on
+// the widget so they can be restored exactly.
+function setWidgetVisible(widget, visible) {
+    if (!widget) return;
+    if (!widget._mykeeOrig) {
+        widget._mykeeOrig = {
+            type: widget.type,
+            hadComputeSize: Object.prototype.hasOwnProperty.call(widget, "computeSize"),
+            computeSize: widget.computeSize,
+            hadLayoutSize: Object.prototype.hasOwnProperty.call(widget, "computeLayoutSize"),
+            computeLayoutSize: widget.computeLayoutSize,
+        };
+    }
+    const orig = widget._mykeeOrig;
+    if (visible) {
+        // Type first: while the type is still "hidden", newer frontends
+        // ignore writes to widget.hidden (they derive visibility from it).
+        widget.type = orig.type;
+        widget.hidden = false;
+        if (orig.hadComputeSize) widget.computeSize = orig.computeSize;
+        else delete widget.computeSize;
+        if (orig.hadLayoutSize) widget.computeLayoutSize = orig.computeLayoutSize;
+        else delete widget.computeLayoutSize;
+    } else {
+        widget.hidden = true;
+        widget.type = "hidden";
+        widget.computeSize = () => [0, -4];
+        widget.computeLayoutSize = () => ({ minHeight: 0, maxHeight: 0, minWidth: 0 });
+    }
+    const el = widget.element || widget.inputEl;
+    if (el) {
+        el.hidden = !visible;
+        el.style.display = visible ? "" : "none";
+    }
+}
 
 // litegraph records each widget's drawn row position in widget.last_y
 // after every draw pass - used here (rather than a custom widget) to
@@ -111,6 +165,19 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const ret = onConfigure ? onConfigure.apply(this, arguments) : undefined;
+            const showWidget = findWidget(this, "show_negative_prompt");
+            if (showWidget) {
+                // Workflow saved before the switch existed: no stored value
+                // for it. Keep its negative prompt visible (and in use) if it
+                // had one, instead of silently hiding/dropping it.
+                const stored = arguments[0]?.widgets_values;
+                const idx = this.widgets.indexOf(showWidget);
+                if (Array.isArray(stored) && stored[idx] === undefined) {
+                    const neg = findWidget(this, "negative_prompt_text");
+                    showWidget.value = !!(neg && String(neg.value || "").trim());
+                }
+                if (this._mykeeApplyNegativeVisibility) this._mykeeApplyNegativeVisibility();
+            }
             if (this._mykeeRefreshTemplateList) this._mykeeRefreshTemplateList();
             return ret;
         };
@@ -123,9 +190,32 @@ app.registerExtension({
             const positiveWidget = findWidget(this, "positive_prompt_text");
             const negativeWidget = findWidget(this, "negative_prompt_text");
             const pathWidget = findWidget(this, "custom_path");
+            const showWidget = findWidget(this, "show_negative_prompt");
             if (!nameWidget || !positiveWidget || !negativeWidget) return ret;
 
             enforceMinWidth(this);
+
+            // Show/hide the negative box. Hiding leaves the node's height
+            // alone, so the positive box simply grows into the freed space;
+            // showing makes sure both boxes fit.
+            const applyNegativeVisibility = () => {
+                const show = showWidget ? !!showWidget.value : true;
+                setWidgetVisible(negativeWidget, show);
+                if (show) {
+                    const needed = this.computeSize();
+                    if (this.size[1] < needed[1]) this.setSize([this.size[0], needed[1]]);
+                }
+                this.setDirtyCanvas(true, true);
+            };
+            this._mykeeApplyNegativeVisibility = applyNegativeVisibility;
+            if (showWidget) {
+                const origShowCallback = showWidget.callback;
+                showWidget.callback = function () {
+                    const r = origShowCallback ? origShowCallback.apply(this, arguments) : undefined;
+                    applyNegativeVisibility();
+                    return r;
+                };
+            }
 
             const currentPath = () => (pathWidget?.value || "").trim();
 
@@ -137,6 +227,11 @@ app.registerExtension({
                     );
                     positiveWidget.value = data.prompt ?? "";
                     negativeWidget.value = data.negative_prompt ?? "";
+                    // Never load a negative prompt invisibly.
+                    if (showWidget && negativeWidget.value.trim() && !showWidget.value) {
+                        showWidget.value = true;
+                        applyNegativeVisibility();
+                    }
                     if (data.name && data.name !== nameWidget.value) nameWidget.value = data.name;
                     this.setDirtyCanvas(true, true);
                 } catch (e) {
@@ -226,7 +321,9 @@ app.registerExtension({
                             path: currentPath(),
                             name,
                             prompt: positiveWidget.value || "",
-                            negative_prompt: negativeWidget.value || "",
+                            // Hidden negative box = no negative prompt (matches
+                            // what the node outputs).
+                            negative_prompt: showWidget && !showWidget.value ? "" : (negativeWidget.value || ""),
                         }),
                     });
                     // The server sanitizes the name for cross-platform file
@@ -255,6 +352,12 @@ app.registerExtension({
 
             refreshList();
             enforceMinWidth(this);
+            applyNegativeVisibility();
+            if (!showWidget || !showWidget.value) {
+                // Fresh node (a loaded workflow restores its own size in
+                // onConfigure): give the positive box room right away.
+                this.setSize([this.size[0], Math.max(this.size[1], DEFAULT_NODE_HEIGHT)]);
+            }
 
             return ret;
         };
