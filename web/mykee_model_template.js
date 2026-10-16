@@ -824,16 +824,44 @@ function setupNode(node) {
     // Re-derived from disk on every reload, so a stale pick shouldn't persist.
     listWidget.serialize = false;
 
-    const refreshList = async () => {
+    // Guards against out-of-order responses: if two refreshes are in flight
+    // (one fired at node creation with the default path, another after the
+    // saved custom_path was restored), only the newest one may update the list.
+    let refreshSeq = 0;
+    const refreshList = async (retriesLeft = 2) => {
+        const seq = ++refreshSeq;
         try {
             const data = await fetchJSON(`/mykee/model_templates/list?path=${encodeURIComponent(currentPath())}`);
-            existingNames = data.templates || [];
+            if (seq !== refreshSeq) return existingNames;
+            // Update the SAME array in place, so any reference the frontend
+            // may hold to options.values stays valid.
+            existingNames.length = 0;
+            existingNames.push(...(data.templates || []));
             if (listWidget.options) listWidget.options.values = existingNames;
+            node.setDirtyCanvas(true, true);
         } catch (e) {
             console.warn("Mykee Model Template: couldn't fetch template list", e);
+            // The server may not be fully ready right after a page load /
+            // workflow switch - try again shortly.
+            if (seq === refreshSeq && retriesLeft > 0) {
+                setTimeout(() => refreshList(retriesLeft - 1), 1000);
+            }
         }
         return existingNames;
     };
+    // onConfigure (below) calls this once the saved custom_path is restored.
+    node._mykeeRefreshTemplateList = refreshList;
+
+    // Re-read the list whenever custom_path changes, so the picker never
+    // shows templates from a stale folder.
+    if (pathWidget) {
+        const origPathCallback = pathWidget.callback;
+        pathWidget.callback = function () {
+            const r = origPathCallback ? origPathCallback.apply(this, arguments) : undefined;
+            refreshList();
+            return r;
+        };
+    }
 
     const newBtn = node.addWidget("button", "🆕 New", null, () => {
         // Starts a fresh template name; the current selections stay, so a
@@ -945,6 +973,12 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const ret = onConfigure?.apply(this, arguments);
+            // Switching workflow tabs / loading a workflow creates the node
+            // first (default widget values, so custom_path still empty) and
+            // only THEN restores the saved values - the list has to be re-read
+            // here, with the restored custom_path, or it stays empty / from
+            // the wrong folder until Reload is pressed by hand.
+            this._mykeeRefreshTemplateList?.();
             // Target nodes may not exist yet while the graph is loading.
             setTimeout(() => {
                 for (let slot = 0; slot < SLOTS.length; slot++) updateOutputSlot(this, slot);
