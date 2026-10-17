@@ -19,6 +19,10 @@ ANY node:
   prompt) and, once the last cell has arrived, outputs the labelled grid.
   Until then it only shows a preview of the partial grid and blocks its
   outputs, so a Save Image node after it saves the finished table only.
+  The preview image lives in ComfyUI's temp folder. By default only ONE
+  temp file per Assembler node is kept and overwritten after every cell
+  (a big plot can be a huge image); "save_every_plot" switches back to a
+  separate temp file for every cell's partial plot.
 
 The x / y / z outputs are only really used when a prompt reaches the server
 without the frontend (e.g. an API call): then the node outputs the values
@@ -27,12 +31,18 @@ of cell 0.
 
 import json
 import os
+import re
 import time
 from collections import OrderedDict
 
 import numpy as np
 import torch
 from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import folder_paths
+except ImportError:
+    folder_paths = None
 
 try:
     from comfy_execution.graph import ExecutionBlocker
@@ -61,6 +71,33 @@ MODEL_EXTENSIONS = (
 # kept so an abandoned run cannot pile up in RAM.
 _MAX_RUNS = 4
 _RUNS = OrderedDict()
+
+# Wall-clock bookkeeping for the summary printed when a plot is finished.
+# "start" is stamped by the controller node when the run's FIRST cell begins
+# (so generating cell 0 is counted too); the Assembler adds one arrival time
+# per cell. Same size cap as _RUNS.
+_TIMINGS = OrderedDict()
+
+
+def _timing(run_id):
+    t = _TIMINGS.get(run_id)
+    if t is None:
+        t = {"start": time.perf_counter(), "arrivals": [], "overhead": 0.0}
+        _TIMINGS[run_id] = t
+        while len(_TIMINGS) > _MAX_RUNS:
+            _TIMINGS.popitem(last=False)
+    return t
+
+
+def _fmt_duration(seconds):
+    seconds = max(0.0, float(seconds))
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, sec = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{int(minutes)}m {sec:04.1f}s"
+    hours, minutes = divmod(int(minutes), 60)
+    return f"{hours}h {minutes:02d}m {sec:04.1f}s"
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +161,20 @@ def _cell_indices(cell, dims):
 # Controller node
 # ---------------------------------------------------------------------------
 
+# Order in which the cells are generated, outermost (slowest changing) axis
+# first, innermost (changes with every image) last. The first entry is the
+# original fixed behaviour. Only the frontend uses the choice (it decides the
+# order of the queued prompts); it does not change the plot's layout.
+LOOP_ORDERS = [
+    "Z → Y → X",
+    "Z → X → Y",
+    "Y → Z → X",
+    "Y → X → Z",
+    "X → Z → Y",
+    "X → Y → Z",
+]
+
+
 class MykeeXYZPlot:
     CATEGORY = "Mykee/Utils"
     FUNCTION = "main"
@@ -147,6 +198,21 @@ class MykeeXYZPlot:
                     "STRING",
                     {"default": "{}", "hidden": True, "socketless": True},
                 ),
+                # After xyz_config on purpose: keeps the widget positions of
+                # workflows saved before this setting existed unchanged.
+                "loop_order": (
+                    LOOP_ORDERS,
+                    {
+                        "default": LOOP_ORDERS[0],
+                        "tooltip": (
+                            "The order the cells are generated in: the first axis is the outermost "
+                            "(changes least often), the last one the innermost (changes with every image). "
+                            "Put the axis that is expensive to change - e.g. a checkpoint / model loader - "
+                            "first, so each model is loaded only once. This only changes the generation "
+                            "order, not the plot's layout (X = columns, Y = rows, Z = one grid per value)."
+                        ),
+                    },
+                ),
             },
             "optional": {
                 "seed": (
@@ -163,7 +229,8 @@ class MykeeXYZPlot:
             },
         }
 
-    def main(self, xyz_config="{}", seed=None):
+    def main(self, xyz_config="{}", loop_order=None, seed=None):
+        # loop_order is read by the frontend when it queues the cells; nothing to do here.
         cfg = _parse_config(xyz_config)
         axes = _active_axes(cfg)
         dims = [len(a["values"]) if a else 1 for a in axes]
@@ -182,6 +249,7 @@ class MykeeXYZPlot:
         if not 0 <= cell < total:
             raise ValueError(f"[Mykee XYZ Plot] Cell index {cell} is out of range (0..{total - 1}).")
 
+        _timing(run_id)  # stamps the start time on the run's first cell
         idx = _cell_indices(cell, dims)
         values = []
         info_axes = []
@@ -440,10 +508,23 @@ class MykeeXYZPlotAssembler:
                         "tooltip": "Cells are scaled down so their longer side is at most this many pixels. 0 = original size.",
                     },
                 ),
+                # Last on purpose: keeps the widget positions of workflows
+                # saved before this switch existed unchanged.
+                "save_every_plot": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Off: the partial plot preview is written to the temp folder as ONE file "
+                                   "that is overwritten after every cell, so only the latest state is kept. "
+                                   "On: every cell's partial plot is kept as its own temp file (can use a lot "
+                                   "of disk space with big plots).",
+                    },
+                ),
             },
+            "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    def main(self, images, xyz_info, font_size=0, cell_max_size=1024):
+    def main(self, images, xyz_info, font_size=0, cell_max_size=1024, save_every_plot=False, unique_id=None):
         run_id = xyz_info["run_id"]
         run = _RUNS.get(run_id)
         if run is None:
@@ -458,11 +539,15 @@ class MykeeXYZPlotAssembler:
                 f"[Mykee XYZ Plot] Cell {xyz_info['cell']} got a batch of "
                 f"{images.shape[0]} images - only the first one goes into the plot."
             )
+        timing = _timing(run_id)
+        timing["arrivals"].append((int(xyz_info["cell"]), time.perf_counter()))
         run["cells"][int(xyz_info["cell"])] = _to_pil(images[0])
 
         done, total = len(run["cells"]), int(xyz_info["total"])
+        t_render = time.perf_counter()
         combined, blocks = _render_grids(run, int(font_size), int(cell_max_size))
-        preview = self._preview(combined)
+        preview = self._preview(combined, save_every_plot, unique_id)
+        timing["overhead"] += time.perf_counter() - t_render
         print(f"[Mykee XYZ Plot] Cell {done}/{total} collected (run {run_id}).")
 
         if done < total:
@@ -470,13 +555,45 @@ class MykeeXYZPlotAssembler:
             return {"ui": preview, "result": (blocked, blocked)}
 
         _RUNS.pop(run_id, None)  # finished - free the cell images
+        self._print_summary(_TIMINGS.pop(run_id, None), total)
         return {"ui": preview, "result": (_to_tensor([combined]), _to_tensor(blocks))}
 
     @staticmethod
-    def _preview(image):
-        from nodes import PreviewImage  # ComfyUI's own; imported lazily
+    def _print_summary(timing, total):
+        """One console line with how long the whole plot took (from the start
+        of the first cell to the arrival of the last one). A cell's time is
+        the gap to the previous cell's arrival (numbered in generation
+        order), so a slow one usually means a model switch."""
+        if not timing or not timing["arrivals"]:
+            return
+        arrivals = timing["arrivals"]
+        elapsed = arrivals[-1][1] - timing["start"]
+        durations, previous = [], timing["start"]
+        for position, (_cell, at) in enumerate(arrivals, start=1):
+            durations.append((at - previous, position))
+            previous = at
+        slowest, slowest_position = max(durations)
+        print(
+            f"[Mykee XYZ Plot] Finished {total} cells in {_fmt_duration(elapsed)} "
+            f"(avg {_fmt_duration(elapsed / len(arrivals))}/cell, slowest cell {slowest_position}: "
+            f"{_fmt_duration(slowest)}; plot rendering/saving {_fmt_duration(timing['overhead'])} in total)."
+        )
 
-        return PreviewImage().save_images(_to_tensor([image]), "mykee_xyz")["ui"]
+    @staticmethod
+    def _preview(image, save_every_plot=False, unique_id=None):
+        if save_every_plot or folder_paths is None:
+            from nodes import PreviewImage  # ComfyUI's own; imported lazily
+
+            return PreviewImage().save_images(_to_tensor([image]), "mykee_xyz")["ui"]
+
+        # One fixed temp file per Assembler node, overwritten every cell.
+        # (unique_id can contain ":" for nodes inside subgraphs - not valid
+        # in a Windows file name.) The frontend adds a random query param to
+        # preview URLs, so the overwritten file is not served from cache.
+        safe_id = re.sub(r"[^A-Za-z0-9_-]", "_", str(unique_id if unique_id is not None else "0"))
+        filename = f"mykee_xyz_latest_{safe_id}.png"
+        image.save(os.path.join(folder_paths.get_temp_directory(), filename), compress_level=1)
+        return {"images": [{"filename": filename, "subfolder": "", "type": "temp"}]}
 
 
 NODE_CLASS_MAPPINGS = {

@@ -12,7 +12,8 @@
  *   BOOLEAN      true / false checkboxes
  *
  * Queueing: api.queuePrompt is wrapped so that one Run becomes one prompt
- * per plot cell (Z outermost, X innermost). In every cell's prompt the links
+ * per plot cell (by default Z outermost, X innermost - the node's
+ * "loop_order" setting can change that). In every cell's prompt the links
  * coming from the x / y / z outputs are replaced by the literal value of that
  * cell - exactly what a Primitive node would put there. So ComfyUI's cache
  * only re-runs what really changed between two cells (e.g. a checkpoint
@@ -259,6 +260,36 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId) {
     return cellOutput;
 }
 
+// Order the cells are queued in. A cell's id (x fastest, then y, then z) never
+// changes - it is what the Assembler places in the grid - only the sequence of
+// the queued prompts does. "loop_order" lists the axes outermost -> innermost,
+// e.g. "Z → Y → X" (default: X changes with every image, Z least often).
+const DEFAULT_LOOP_ORDER = "Z → Y → X";
+
+function cellSequence(dims, loopOrder) {
+    const slotOf = { X: 0, Y: 1, Z: 2 };
+    let slots = String(loopOrder ?? "")
+        .split(/[^XYZ]+/i)
+        .filter(Boolean)
+        .map((letter) => slotOf[letter.toUpperCase()]);
+    if (slots.length !== 3 || new Set(slots).size !== 3) {
+        slots = String(DEFAULT_LOOP_ORDER).split(/[^XYZ]+/i).filter(Boolean).map((l) => slotOf[l]);
+    }
+    const strides = [1, dims[0], dims[0] * dims[1]];
+    const sequence = [];
+    const index = [0, 0, 0];
+    const walk = (depth) => {
+        if (depth === 3) {
+            sequence.push(index[0] * strides[0] + index[1] * strides[1] + index[2] * strides[2]);
+            return;
+        }
+        const slot = slots[depth];
+        for (index[slot] = 0; index[slot] < dims[slot]; index[slot]++) walk(depth + 1);
+    };
+    walk(0);
+    return sequence;
+}
+
 function findPlotNode(output) {
     const keys = Object.keys(output ?? {}).filter((key) => output[key]?.class_type === NODE_NAME);
     if (keys.length > 1) {
@@ -292,7 +323,8 @@ function planFromPrompt(prompt) {
     }
 
     const dims = [0, 1, 2].map((slot) => config.axes[slot]?.values?.length || 1);
-    return { sourceKey, config, dims, total: dims[0] * dims[1] * dims[2] };
+    const loopOrder = output[sourceKey].inputs?.loop_order ?? DEFAULT_LOOP_ORDER;
+    return { sourceKey, config, dims, total: dims[0] * dims[1] * dims[2], loopOrder };
 }
 
 const baseQueuePrompt = api.queuePrompt;
@@ -300,7 +332,7 @@ api.queuePrompt = async function (number, prompt, ...rest) {
     const plan = planFromPrompt(prompt);
     if (!plan) return baseQueuePrompt.call(this, number, prompt, ...rest);
 
-    const { sourceKey, config, dims, total } = plan;
+    const { sourceKey, config, dims, total, loopOrder } = plan;
     if (total > CELL_CONFIRM_LIMIT) {
         const ok = window.confirm(`Mykee XYZ Plot: this will queue ${total} prompts (${dims.join(" × ")}). Continue?`);
         if (!ok) throw new Error("Mykee XYZ Plot: queueing cancelled.");
@@ -308,7 +340,7 @@ api.queuePrompt = async function (number, prompt, ...rest) {
 
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     let response;
-    for (let cell = 0; cell < total; cell++) {
+    for (const cell of cellSequence(dims, loopOrder)) {
         const output = buildCellOutput(prompt.output, sourceKey, config, cell, dims, runId);
         response = await baseQueuePrompt.call(this, number, { ...prompt, output }, ...rest);
         const hasErrors = response?.node_errors && Object.keys(response.node_errors).length > 0;

@@ -2280,17 +2280,27 @@ connect the axis to the parameter itself.
 
 ### How a run works
 
-One Run is split into one prompt per cell (Z outermost, X innermost), all
-queued at once. In each cell's prompt the axis links are replaced by that
+One Run is split into one prompt per cell (by default Z outermost, X
+innermost - see **loop_order** below), all queued at once. In each cell's prompt the axis links are replaced by that
 cell's literal value, exactly like a Primitive node would do it. Because of
 that, ComfyUI's cache only re-runs what actually changed between two cells:
 
-- **Put the slowest parameter (e.g. the checkpoint) on Z**, then Y: the
-  model is loaded once per Z value, not once per cell.
+- **Put the slowest parameter (e.g. the checkpoint) outermost**: the
+  model is loaded once per value, not once per cell. By default that is Z
+  (then Y), but you don't have to wire it that way - set **loop_order**.
 - Every cell is a normal prompt, so a Save Image node after the sampler /
   decoder saves each cell with its own correct metadata.
 - Random seeds (Mykee Seed at -1, KSampler "randomize") are resolved once
   per Run, so all cells of a plot use the same seed.
+
+**loop_order** (combo on the XYZ Plot node, default `Z → Y → X`) sets the
+order the cells are generated in, outermost axis first, innermost (changes
+with every image) last - e.g. `X → Z → Y` loops X outermost, then Z, with Y
+changing every image. It is independent of which axis output a parameter is
+wired to, and it does not change the finished plot (X = columns, Y = rows,
+Z = one grid per value), only the generation order - so put the axis that
+is expensive to change (checkpoint / model loader) first. Unused axes have
+no effect on the order.
 
 The Assembler shows the partial grid (missing cells in grey) after every
 cell. Its outputs are blocked until the last cell has arrived, so a Save
@@ -2304,6 +2314,19 @@ Assembler inputs:
 - **cell_max_size** - cells are scaled down to at most this size (longer
   side), 0 = original size. Cells with a different aspect ratio / size are
   letterboxed into the first cell's size.
+- **save_every_plot** (default off) - the preview of the partial plot is
+  written to ComfyUI's temp folder after every cell, and a big plot can be
+  a huge image. Off: only ONE temp file per Assembler node is kept, and it
+  is overwritten after every cell (so only the latest state stays on
+  disk). On: every cell's partial plot is kept as its own temp file.
+
+When the last cell has arrived, the Assembler prints one summary line to
+the console, e.g. `Finished 6 cells in 1m 23.4s (avg 13.9s/cell, slowest
+cell 4: 31.2s; plot rendering/saving 2.1s in total)`. The time runs from
+the start of the first cell (generating it is included), a cell's time is
+the gap to the previous cell's arrival - so a slow one is usually a model
+switch on the Z axis - and the last part shows how much of the total went
+into drawing / saving the partial plot previews.
 
 Assembler outputs:
 
