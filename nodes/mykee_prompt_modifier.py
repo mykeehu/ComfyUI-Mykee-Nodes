@@ -147,6 +147,32 @@ def _count_prompt_tokens(tokens):
         return None
 
 
+def _think_suffix(clip, thinking):
+    """Assistant-turn suffix for Qwen3.5-family clips.
+
+    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
+    control text when it applies its own chat template, and that is skipped
+    here because this node builds the chat text itself (it starts with
+    "<|im_start|>"). Without this suffix the "thinking" toggle does nothing,
+    and an open <think> block can use up the whole token budget (it is then
+    stripped below, leaving an empty response). So add exactly what
+    ComfyUI's own template would add - for Qwen3.5 clips only; every other
+    model is left untouched.
+    """
+    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
+        if "qwen35" in type(obj).__name__.lower():
+            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
+    return ""
+
+
+def _empty_response_message(raw_output):
+    """Explain WHY the stripped response is empty."""
+    if "<think>" in raw_output and "</think>" not in raw_output:
+        return ("the model used up its max_length budget while still "
+                "thinking - raise max_length or turn thinking off")
+    return "the model returned an empty response"
+
+
 def _toast(node_id, severity, summary, detail):
     """Sends a non-blocking ComfyUI toast notification instead of a hard
     error. Safe no-op if there's no running PromptServer."""
@@ -453,6 +479,7 @@ class MykeePromptModifier:
                 f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{user_text}<|im_end|>\n"
                 f"<|im_start|>assistant\n"
             )
+            chat_text += _think_suffix(clip, thinking)
             try:
                 tokens = clip.tokenize(chat_text, image=image, skip_template=True, min_length=1, thinking=thinking)
             except TypeError:
@@ -478,6 +505,7 @@ class MykeePromptModifier:
                 f"<|im_start|>user\n{user_text}<|im_end|>\n"
                 f"<|im_start|>assistant\n"
             )
+            chat_text += _think_suffix(clip, thinking)
             try:
                 # this text also starts with "<|im_start|>", so it's used
                 # verbatim - see the comment in the image branch above.
@@ -516,6 +544,7 @@ class MykeePromptModifier:
                 edited_prompt = clip.decode(generated_ids)
                 # safety net in case a thinking-capable model still emits a
                 # <think> block despite no thinking request
+                raw_output = edited_prompt
                 edited_prompt = re.sub(r"<think>.*?(?:</think>|$)", "", edited_prompt, flags=re.DOTALL).strip()
                 # Strip the required ANALYSIS line: the default system
                 # prompts force the model to visibly plan the edit before
@@ -533,7 +562,7 @@ class MykeePromptModifier:
                           "found in the model's response - using the full "
                           "response as-is.")
                 if not edited_prompt:
-                    edited_prompt = "[the model returned an empty response]"
+                    edited_prompt = f"[{_empty_response_message(raw_output)}]"
             except Exception as e:
                 edited_prompt = (
                     f"[generation failed: {type(e).__name__}: {e}]\n"

@@ -203,6 +203,32 @@ def _count_prompt_tokens(tokens):
         return None
 
 
+def _think_suffix(clip, thinking):
+    """Assistant-turn suffix for Qwen3.5-family clips.
+
+    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
+    control text when it applies its own chat template, and that is skipped
+    here because this node builds the chat text itself (it starts with
+    "<|im_start|>"). Without this suffix the "thinking" toggle does nothing,
+    and an open <think> block can use up the whole token budget (it is then
+    stripped below, leaving an empty response). So add exactly what
+    ComfyUI's own template would add - for Qwen3.5 clips only; every other
+    model is left untouched.
+    """
+    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
+        if "qwen35" in type(obj).__name__.lower():
+            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
+    return ""
+
+
+def _empty_response_message(raw_output):
+    """Explain WHY the stripped response is empty."""
+    if "<think>" in raw_output and "</think>" not in raw_output:
+        return ("the model used up its max_length budget while still "
+                "thinking - raise max_length or turn thinking off")
+    return "the model returned an empty response"
+
+
 def _toast(node_id, severity, summary, detail):
     """Sends a non-blocking ComfyUI toast notification instead of a hard
     error. Safe no-op if there's no running PromptServer."""
@@ -652,6 +678,7 @@ class MykeePromptAdvancedUltimate:
         """Shared tokenize+generate+decode call for one stage. Returns the
         decoded, <think>-stripped text (or a bracketed [...] error string
         on failure, matching the other Prompt Advanced nodes' convention)."""
+        chat_text = chat_text + _think_suffix(clip, thinking)
         try:
             tokens = clip.tokenize(chat_text, **tokenize_kwargs)
         except TypeError:
@@ -698,9 +725,10 @@ class MykeePromptAdvancedUltimate:
                 seed=int(seed),
             )
             text = clip.decode(generated_ids)
+            raw_output = text
             text = re.sub(r"<think>.*?(?:</think>|$)", "", text, flags=re.DOTALL).strip()
             if not text:
-                text = f"[{stage_label}: the model returned an empty response]"
+                text = f"[{stage_label}: {_empty_response_message(raw_output)}]"
             return text
         except Exception as e:
             return (
