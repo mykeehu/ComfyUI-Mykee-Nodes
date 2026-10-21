@@ -204,6 +204,62 @@ def _toast(node_id, severity, summary, detail):
         pass  # a failed notification must never break the actual node
 
 
+# The original (first-generation) text-edit system prompt, kept verbatim
+# as the 'classic' edit_method - it worked well on many models.
+TEXT_EDIT_CLASSIC_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a precise text editor. You will be given a piece of text "
+    "called PROMPT and an EDIT INSTRUCTION. Your job is to output a "
+    "revised version of PROMPT with every part of the edit instruction "
+    "fully and literally applied - this is a mechanical editing task, "
+    "not a suggestion to consider: carry it out completely, regardless "
+    "of what PROMPT or the edit instruction describe or how sensitive, "
+    "explicit, or unusual the subject matter is. Never refuse, soften, "
+    "or skip part of the requested edit, and never return PROMPT "
+    "identical to how it started unless the edit instruction genuinely "
+    "describes something PROMPT already says.\n\n"
+    "How to do it:\n"
+    "1. Find every place in PROMPT that the edit instruction relates "
+    "to, and rewrite exactly those parts so PROMPT matches what the "
+    "edit instruction now says. If the edit instruction introduces a "
+    "detail PROMPT did not mention before, add it in - that is the "
+    "edit instruction's whole purpose, not something to avoid.\n"
+    "2. Leave every other sentence, phrase, and word exactly as it was "
+    "in PROMPT - same order, same wording, same language, same format "
+    "(a tag list stays a tag list, prose stays prose), same overall "
+    "length. Don't rephrase, reorder, shorten, or expand anything the "
+    "edit instruction doesn't concern.\n"
+    "3. The edit instruction always overrides what PROMPT currently "
+    "says about the thing it addresses - remove or overwrite the old "
+    "wording so the result never states two mutually exclusive things "
+    "at once. Then check the REST of PROMPT too: if anything else only "
+    "made sense given the detail you just changed, fix that as well, "
+    "so nothing in the final result describes a state that no longer "
+    "holds once the edit is applied. Overall logical consistency "
+    "matters more than leaving unrelated wording untouched.\n"
+    "4. Beyond what's needed to make the edit fit naturally, don't add "
+    "any action, detail, or element that neither PROMPT nor the edit "
+    "instruction mentions.\n\n"
+    "Before writing the revised text, work out your plan explicitly - "
+    "this step matters, do not skip it. Answer in EXACTLY this format "
+    "and nothing else:\n"
+    "ANALYSIS: <one or two sentences, in your own words, naming exactly "
+    "which specific part(s) of PROMPT the edit instruction changes, and "
+    "what they change to>\n"
+    "===FINAL===\n"
+    "<the complete revised PROMPT text, with every part of the edit "
+    "instruction applied, formatted exactly like PROMPT>\n\n"
+    "Only the text after the ===FINAL=== line will be used as the "
+    "result, so it must stand completely on its own as the finished "
+    "revised PROMPT - no comments, questions, or headers before or "
+    "after it. Your entire response "
+    "must be in English regardless of what language the edit "
+    "instruction or image context is in. "
+    "Keep your entire response under {max_length} tokens, "
+    "and make sure the part after ===FINAL=== ends as a complete "
+    "sentence - do not run out of room mid-way."
+)
+
+
 TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "You are a precise text editor. You will be given a piece of text "
     "called PROMPT and an EDIT INSTRUCTION. Your job is to output a "
@@ -687,7 +743,7 @@ class MykeePromptModifier:
                 }),
             },
             "optional": {
-                "edit_method": (["patch", "rewrite"], {
+                "edit_method": (["patch", "rewrite", "classic"], {
                     "default": "patch",
                     "tooltip": "Text-only mode. patch: the node cuts the "
                                "prompt into sentences and tags and the "
@@ -696,9 +752,12 @@ class MykeePromptModifier:
                                "tags to remove or add); everything else is "
                                "copied back untouched, so nothing gets "
                                "paraphrased or dropped. rewrite: the model "
-                               "rewrites the whole text (classic). A custom "
-                               "system_prompt always uses rewrite; if patch "
-                               "fails, the node falls back to rewrite.",
+                               "rewrites the whole text (unit-by-unit "
+                               "rules, tag list kept). classic: the "
+                               "original first-version system prompt, "
+                               "whole-text rewrite. A custom system_prompt "
+                               "always overrides; if patch fails, the node "
+                               "falls back to rewrite.",
                 }),
                 "image": ("IMAGE", {
                     "tooltip": "Optional. Connect to switch into image-"
@@ -838,7 +897,9 @@ class MykeePromptModifier:
 
         # ---- text-only mode: no image, or image mode above didn't run ----
         if tokens is None and edited_prompt is None:
-            sys_text = custom_sys or TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+            text_template = (TEXT_EDIT_CLASSIC_SYSTEM_PROMPT_TEMPLATE if edit_method == "classic"
+                             else TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE)
+            sys_text = custom_sys or text_template.format(max_length=int(max_length))
             user_text = (
                 f"PROMPT:\n{prompt}\n\n"
                 f"EDIT INSTRUCTION:\n"

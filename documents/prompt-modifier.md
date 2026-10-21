@@ -49,7 +49,7 @@ sense with it off is fixed too, not left dangling.
 - **max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
   repetition_penalty, presence_penalty, thinking, unload_after_run** - the
   same as in Mykee Prompt Advanced (same defaults).
-- **edit_method** (optional, text mode only) - `patch` (default) or `rewrite`.
+- **edit_method** (optional, text mode only) - `patch` (default), `rewrite` or `classic`.
   With `patch` the node splits `prompt` into numbered sentences plus the tag
   list and asks the model only for a small JSON diff (which sentences to
   keep / rewrite / delete, which sentences to add, which tags to remove or
@@ -57,7 +57,9 @@ sense with it off is fixed too, not left dangling.
   touch stays word for word and the `Tags:` line is always rebuilt. If the
   model returns unusable JSON twice, the node falls back to `rewrite` (the
   model rewrites the whole text). A custom `system_prompt` also uses
-  `rewrite`.
+  `rewrite`. `rewrite` uses the unit-by-unit rules (the whole text is
+  rewritten, the tag list is always returned). `classic` is the original
+  first-version system prompt, kept verbatim, also a whole-text rewrite.
 - **image** (optional) - switches the node into image-edit mode.
 
 ## Outputs
