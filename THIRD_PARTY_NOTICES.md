@@ -30,3 +30,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## MOSS-Image
+
+The built-in caption prompt of the "Mykee JSON Captioner" node
+(`nodes/mykee_json_captioner.py`) is the "Caption Prompt" published in the
+MOSS-Image user guide (`USERGUIDE.md`, section "Image Captioning") of
+[OpenMOSS/MOSS-Image](https://github.com/OpenMOSS/MOSS-Image), used under
+the Apache License, Version 2.0
+(<https://www.apache.org/licenses/LICENSE-2.0>). The prompt text is
+reproduced verbatim. The conversion of bounding boxes to the centered
+`yxyx` layout format follows the arithmetic of `compile_prompt.py` from the
+same repository (Apache-2.0). The rest of the node is original work.

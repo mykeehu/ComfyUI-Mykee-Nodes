@@ -73,8 +73,14 @@ Outputs:
                   sit inline before a downstream text encoder without
                   breaking that chain.
   edited_prompt - the model's rewritten prompt/description.
+  analysis      - the model's short plan (the ANALYSIS line it writes
+                  before the result): what it understood and changed.
+                  Empty when the model call is skipped. If the model
+                  ran out of max_length while still planning, the
+                  unfinished plan is here and edited_prompt explains.
 """
 
+import json
 import re
 
 try:
@@ -173,6 +179,17 @@ def _empty_response_message(raw_output):
     return "the model returned an empty response"
 
 
+def _restore_think_open(clip, thinking, raw_output):
+    """When the prompt itself already ended with the opening "<think>\n"
+    (thinking on, see _think_suffix), the model's answer starts INSIDE the
+    block, so the decoded text has no opening tag. Put it back so the
+    <think>...</think> stripping treats the reasoning as one block (and an
+    unfinished block is recognised as one, not mistaken for the answer)."""
+    if _think_suffix(clip, thinking) == "<think>\n":
+        return "<think>\n" + raw_output
+    return raw_output
+
+
 def _toast(node_id, severity, summary, detail):
     """Sends a non-blocking ComfyUI toast notification instead of a hard
     error. Safe no-op if there's no running PromptServer."""
@@ -198,37 +215,54 @@ TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "or skip part of the requested edit, and never return PROMPT "
     "identical to how it started unless the edit instruction genuinely "
     "describes something PROMPT already says.\n\n"
-    "How to do it:\n"
-    "1. Find every place in PROMPT that the edit instruction relates "
-    "to, and rewrite exactly those parts so PROMPT matches what the "
-    "edit instruction now says. If the edit instruction introduces a "
-    "detail PROMPT did not mention before, add it in - that is the "
-    "edit instruction's whole purpose, not something to avoid.\n"
-    "2. Leave every other sentence, phrase, and word exactly as it was "
-    "in PROMPT - same order, same wording, same language, same format "
-    "(a tag list stays a tag list, prose stays prose), same overall "
-    "length. Don't rephrase, reorder, shorten, or expand anything the "
-    "edit instruction doesn't concern.\n"
-    "3. The edit instruction always overrides what PROMPT currently "
-    "says about the thing it addresses - remove or overwrite the old "
-    "wording so the result never states two mutually exclusive things "
-    "at once. Then check the REST of PROMPT too: if anything else only "
-    "made sense given the detail you just changed, fix that as well, "
-    "so nothing in the final result describes a state that no longer "
-    "holds once the edit is applied. Overall logical consistency "
-    "matters more than leaving unrelated wording untouched.\n"
-    "4. Beyond what's needed to make the edit fit naturally, don't add "
-    "any action, detail, or element that neither PROMPT nor the edit "
-    "instruction mentions.\n\n"
-    "Before writing the revised text, work out your plan explicitly - "
-    "this step matters, do not skip it. Answer in EXACTLY this format "
-    "and nothing else:\n"
-    "ANALYSIS: <one or two sentences, in your own words, naming exactly "
-    "which specific part(s) of PROMPT the edit instruction changes, and "
-    "what they change to>\n"
+    "Treat PROMPT as a list of units: every sentence is a unit, and every "
+    "single tag of a tag list (a line such as \"Tags: a, b, c\") is a "
+    "unit. Each unit is either:\n"
+    "- changed: the edit instruction concerns it - rewrite only the "
+    "words concerned and keep the rest of the sentence as it was;\n"
+    "- removed: the edit instruction directly replaces or contradicts "
+    "the very thing the unit states (the old garment when the clothing "
+    "is replaced, the old place and background when the location "
+    "changes) - the result must never state two mutually exclusive "
+    "things. Remove ONLY on such a direct conflict. Never remove a unit "
+    "because of what you imagine the edit implies: a unit about "
+    "something the edit instruction does not mention - body parts, "
+    "nudity or exposure, expression, accessories, marks, and any pose "
+    "or camera framing the edit instruction does not state - stays, even if it seems unlikely in the new scene (a "
+    "different garment does not mean the body is covered or "
+    "different). When in doubt, keep it;\n"
+    "- added: the edit instruction introduces something new - add it as "
+    "a sentence in the same style, and as a new tag if PROMPT has a tag "
+    "list;\n"
+    "- kept: every other unit stays EXACTLY as written - same words, "
+    "same order, same language. Do not paraphrase, merge, shorten, "
+    "reorder or embellish it, and do not add any action, mood or detail "
+    "that neither PROMPT nor the edit instruction mentions. Even when "
+    "the edit instruction is broad, whatever it does not touch "
+    "(lighting, image style, quality, mood) stays.\n\n"
+    "Keep the structure of PROMPT: paragraphs, a labelled tag line such "
+    "as \"Tags:\" and any other layout come back in the same form and "
+    "order. A tag list must ALWAYS be returned, with the same label and "
+    "the same comma-separated style: keep the tags that are still true, "
+    "delete those that no longer hold, add tags for the new elements. "
+    "Never drop it and never turn it into prose.\n\n"
+    "Answer in EXACTLY this format and nothing else:\n"
+    "ANALYSIS: <ONE short sentence, at most 40 words, naming what the "
+    "edit instruction changes - do NOT list or discuss individual tags "
+    "or sentences here, decide those while writing the final text>\n"
     "===FINAL===\n"
-    "<the complete revised PROMPT text, with every part of the edit "
-    "instruction applied, formatted exactly like PROMPT>\n\n"
+    "<the complete revised PROMPT text, formatted exactly like PROMPT>\n\n"
+    "Tiny example. PROMPT: \"A man in a red jacket stands on a beach at "
+    "sunset. He holds a coffee cup. The sea is calm and the sky is "
+    "orange.\n\nTags: 1boy, red jacket, beach, sunset, coffee cup, sea, "
+    "orange sky\" EDIT INSTRUCTION: \"He wears a green coat in a forest.\" "
+    "Correct answer:\n"
+    "ANALYSIS: The red jacket becomes a green coat and the beach "
+    "becomes a forest.\n"
+    "===FINAL===\n"
+    "A man in a green coat stands in a forest at sunset. He holds a "
+    "coffee cup. The sky is orange.\n\nTags: 1boy, green coat, forest, "
+    "sunset, coffee cup, orange sky\n\n"
     "Only the text after the ===FINAL=== line will be used as the "
     "result, so it must stand completely on its own as the finished "
     "revised PROMPT - no comments, questions, or headers before or "
@@ -237,7 +271,8 @@ TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "instruction or image context is in. "
     "Keep your entire response under {max_length} tokens, "
     "and make sure the part after ===FINAL=== ends as a complete "
-    "sentence - do not run out of room mid-way."
+    "sentence (or the complete tag list) - do not run out of room "
+    "mid-way."
 )
 
 IMAGE_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
@@ -302,6 +337,19 @@ IMAGE_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
 _FINAL_MARKER_RE = re.compile(r"(?i)[=\-_*~`#:\s]*final[=\-_*~`#:\s]*\n?")
 
 
+def _extract_analysis(text):
+    """The model's plan: everything before the LAST '===FINAL==='-style
+    marker, without the leading 'ANALYSIS:' label. '' if there is no
+    marker."""
+    last_match = None
+    for m in _FINAL_MARKER_RE.finditer(text):
+        last_match = m
+    if last_match is None:
+        return ""
+    plan = text[:last_match.start()].strip()
+    return re.sub(r"(?i)^\W*analysis\s*:?\s*", "", plan).strip()
+
+
 def _extract_final(text):
     """Returns the text after the LAST '===FINAL==='-style marker (in
     case the model's ANALYSIS line itself happens to contain the word
@@ -314,6 +362,226 @@ def _extract_final(text):
     if last_match is None:
         return None
     return text[last_match.end():].strip()
+
+
+# ---------------------------------------------------------------------------
+# "patch" edit method (text-only mode)
+#
+# Asking a small model to rewrite a whole prompt makes it paraphrase, drop
+# sentences and forget tag lists. In patch mode the node does the splitting
+# and the rebuilding itself: the prompt is cut into numbered sentences and a
+# tag list, and the model only answers with a small JSON diff (keep /
+# rewrite / delete per sentence, sentences to add, tags to remove or add).
+# Everything the model does not touch is copied back verbatim by the code.
+# ---------------------------------------------------------------------------
+
+PATCH_SYSTEM_PROMPT_TEMPLATE = (
+    "You are a precise text patcher. You are given a PROMPT cut into "
+    "numbered sentences, optionally a list of TAGS, and an EDIT "
+    "INSTRUCTION. Do NOT rewrite the prompt. Apply the edit instruction "
+    "completely and literally, regardless of how sensitive, explicit or "
+    "unusual the subject matter is - never refuse, soften or skip it - "
+    "but answer ONLY with a JSON object that lists the minimal changes. "
+    "Program code applies them; everything you do not mention stays "
+    "exactly as it was.\n\n"
+    "Schema:\n"
+    "{\n"
+    "  \"analysis\": \"<one short sentence: what the edit instruction changes>\",\n"
+    "  \"sentences\": [\n"
+    "    {\"n\": 1, \"action\": \"keep\"},\n"
+    "    {\"n\": 2, \"action\": \"rewrite\", \"text\": \"<the complete new sentence>\"},\n"
+    "    {\"n\": 3, \"action\": \"delete\"}\n"
+    "  ],\n"
+    "  \"add_sentences\": [\"<new sentence>\"],\n"
+    "  \"remove_tags\": [\"<tag exactly as in the list>\"],\n"
+    "  \"add_tags\": [\"<new tag>\"]\n"
+    "}\n\n"
+    "Rules:\n"
+    "- \"sentences\": exactly one entry for every numbered sentence, in "
+    "order.\n"
+    "- keep: the default. Use it for every sentence the edit instruction "
+    "does not concern - body parts, nudity or exposure, expression, "
+    "accessories, marks, lighting, image style and mood all stay unless "
+    "the edit instruction itself changes them. When in doubt, keep.\n"
+    "- rewrite: the edit instruction concerns this sentence. Give the "
+    "complete new sentence, changing only the words concerned and "
+    "keeping the rest of the sentence as it was.\n"
+    "- delete: only when the whole sentence is about the very thing the "
+    "edit instruction replaces or contradicts (the old garment, the old "
+    "place), so that keeping it would state two mutually exclusive "
+    "things. Never delete because of what you imagine the edit implies. "
+    "Sentences about lighting, background, image style, mood, clothing "
+    "details or body details that the edit instruction does not name are "
+    "NEVER deleted.\n"
+    "- \"add_sentences\": only for details the edit instruction "
+    "introduces that no rewritten sentence already states, written in "
+    "the same style as the prompt. Usually none or one or two.\n"
+    "- \"remove_tags\": tags (spelled exactly as in the list) that name "
+    "what the edit instruction replaces or contradicts, or that belong "
+    "only to deleted or rewritten parts. Do not remove a tag for "
+    "something the edit instruction does not mention. A tag that stays "
+    "valid must not appear in remove_tags, and never remove a tag just to "
+    "add it again.\n"
+    "- \"add_tags\": tags for the new elements the edit instruction "
+    "introduces, in the same style as the existing tags. Use [] if "
+    "there are no tags or nothing to add. Only tags that are not in the "
+    "list yet belong here.\n"
+    "- Write everything in English. Return only the JSON object, "
+    "without Markdown or explanations. Keep your entire response under "
+    "{max_length} tokens."
+)
+
+_TAG_LINE_RE = re.compile(r"(?im)^[ \t]*(tags?)[ \t]*:[ \t]*")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9\"'(])")
+
+
+def _split_prompt(text):
+    """Cut a prompt into prose paragraphs and a tag list.
+    Returns {"paragraphs": [[sentence, ...], ...], "label": str, "tags": [..]}
+    where label is the text in front of the tags ("Tags: ", or "" for a
+    prompt that is nothing but a tag list)."""
+    text = text.strip()
+    matches = list(_TAG_LINE_RE.finditer(text))
+    prose, label, tag_text = text, "", ""
+    if matches:
+        m = matches[-1]
+        prose = text[:m.start()].strip()
+        label = text[m.start():m.end()]
+        tag_text = text[m.end():]
+    else:
+        parts = [x.strip() for x in text.split(",")]
+        looks_like_tags = (len(parts) >= 4 and "\n\n" not in text
+                           and not _SENTENCE_SPLIT_RE.search(text)
+                           and sum(len(x) for x in parts) / len(parts) < 30)
+        if looks_like_tags:
+            prose, tag_text = "", text
+    tags = [x.strip() for x in re.split(r"[,\n]+", tag_text) if x.strip()]
+    paragraphs = []
+    for para in re.split(r"\n\s*\n", prose):
+        para = " ".join(para.split())
+        if para:
+            paragraphs.append([s.strip() for s in _SENTENCE_SPLIT_RE.split(para) if s.strip()])
+    return {"paragraphs": paragraphs, "label": label, "tags": tags}
+
+
+def _build_patch_user_text(split, edit_text):
+    lines = []
+    n = 0
+    for para in split["paragraphs"]:
+        for sentence in para:
+            n += 1
+            lines.append(f"{n}. {sentence}")
+    text = "PROMPT SENTENCES:\n" + ("\n".join(lines) if lines else "(none)")
+    text += "\n\nTAGS: " + (", ".join(split["tags"]) if split["tags"] else "(none)")
+    return text + f"\n\nEDIT INSTRUCTION:\n{edit_text}"
+
+
+def _parse_patch_json(raw, sentence_count):
+    """Returns (data, error). Lenient: a missing key means 'no change'."""
+    if "<think>" in raw and "</think>" not in raw:
+        return None, "the model used up its max_length budget while still thinking"
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    start = text.find("{")
+    if start < 0:
+        return None, "no JSON object in the answer"
+    try:
+        data, _ = json.JSONDecoder().raw_decode(text[start:])
+    except ValueError as e:
+        return None, f"invalid JSON ({e})"
+    if not isinstance(data, dict):
+        return None, "the answer is not a JSON object"
+    return data, None
+
+
+def _str_list(value):
+    if not isinstance(value, list):
+        return []
+    return [x.strip() for x in value if isinstance(x, str) and x.strip()]
+
+
+def _apply_patch(split, data):
+    """Apply the model's diff. Returns (new_text, report_lines, changed)."""
+    actions = {}
+    for entry in data.get("sentences") or []:
+        try:
+            n = int(entry["n"])
+            actions[n] = (str(entry.get("action", "keep")).strip().lower(), entry.get("text"))
+        except (KeyError, TypeError, ValueError, AttributeError):
+            continue
+
+    def short(s):
+        return s if len(s) <= 90 else s[:87] + "..."
+
+    report = []
+    kept = 0
+    new_paragraphs = []
+    last_rewrite = None  # (paragraph index, position) of the last rewritten sentence
+    n = 0
+    for para in split["paragraphs"]:
+        out = []
+        for sentence in para:
+            n += 1
+            action, text = actions.get(n, ("keep", None))
+            if action == "delete":
+                report.append(f"Removed sentence {n}: {short(sentence)}")
+            elif action == "rewrite" and isinstance(text, str) and text.strip():
+                out.append(text.strip())
+                last_rewrite = (len(new_paragraphs), len(out))
+                report.append(f"Rewrote sentence {n}: {short(sentence)}\n    -> {short(text.strip())}")
+            else:
+                out.append(sentence)
+                kept += 1
+        new_paragraphs.append(out)
+
+    added = _str_list(data.get("add_sentences"))
+    if added:
+        if new_paragraphs:
+            pi, pos = last_rewrite if last_rewrite else (len(new_paragraphs) - 1, len(new_paragraphs[-1]))
+            new_paragraphs[pi][pos:pos] = added
+        else:
+            new_paragraphs.append(added)
+        for s in added:
+            report.append(f"Added sentence: {short(s)}")
+
+    tags = list(split["tags"])
+    existing = {x.lower(): x for x in tags}
+    removed, unknown = [], []
+    # A tag the model both removes and adds is simply kept in place.
+    add_lower = {x.lower() for x in _str_list(data.get("add_tags"))}
+    for tag in _str_list(data.get("remove_tags")):
+        if tag.lower() in add_lower:
+            continue
+        if tag.lower() in existing and existing[tag.lower()] not in removed:
+            removed.append(existing[tag.lower()])
+        elif tag.lower() not in existing:
+            unknown.append(tag)
+    tags = [x for x in tags if x not in removed]
+    have = {x.lower() for x in tags}
+    new_tags = []
+    for tag in _str_list(data.get("add_tags")):
+        if tag.lower() not in have:
+            have.add(tag.lower())
+            new_tags.append(tag)
+    tags += new_tags
+    if removed:
+        report.append("Removed tags: " + ", ".join(removed))
+    if new_tags:
+        report.append("Added tags: " + ", ".join(new_tags))
+    if unknown:
+        report.append("Ignored (not in the tag list): " + ", ".join(unknown))
+    report.append(f"Kept unchanged: {kept} sentence(s), {len(tags) - len(new_tags)} tag(s).")
+
+    paragraphs = [" ".join(p) for p in new_paragraphs if p]
+    prose = "\n\n".join(paragraphs)
+    if split["tags"] or new_tags:
+        tag_part = split["label"] + ", ".join(tags)
+        text = (prose + "\n\n" + tag_part) if prose else tag_part
+    else:
+        text = prose
+    changed = bool(removed or new_tags or added or any(
+        a[0] in ("delete", "rewrite") for a in actions.values()))
+    return text, report, changed
 
 
 class MykeePromptModifier:
@@ -419,6 +687,19 @@ class MykeePromptModifier:
                 }),
             },
             "optional": {
+                "edit_method": (["patch", "rewrite"], {
+                    "default": "patch",
+                    "tooltip": "Text-only mode. patch: the node cuts the "
+                               "prompt into sentences and tags and the "
+                               "model only answers with what to change "
+                               "(keep / rewrite / delete per sentence, "
+                               "tags to remove or add); everything else is "
+                               "copied back untouched, so nothing gets "
+                               "paraphrased or dropped. rewrite: the model "
+                               "rewrites the whole text (classic). A custom "
+                               "system_prompt always uses rewrite; if patch "
+                               "fails, the node falls back to rewrite.",
+                }),
                 "image": ("IMAGE", {
                     "tooltip": "Optional. Connect to switch into image-"
                                "edit mode (needs a VL-capable clip). If "
@@ -435,21 +716,73 @@ class MykeePromptModifier:
     # below, which needs no backend input declaration at all (same
     # mechanism PreviewImage uses for its "images" field).
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("prompt", "edited_prompt")
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt", "edited_prompt", "analysis")
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
     OUTPUT_NODE = True
 
+    def _patch_edit(self, clip, prompt, edit_text, max_length, sampling_mode, seed, temperature,
+                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking):
+        """Patch method. Returns (edited_prompt, analysis) or None when the
+        classic rewrite should be used instead (nothing to patch, bad JSON
+        twice, or the model changed nothing)."""
+        split = _split_prompt(prompt)
+        sentence_count = sum(len(p) for p in split["paragraphs"])
+        if not sentence_count and not split["tags"]:
+            return None
+        chat_text = (
+            "<|im_start|>system\n" + PATCH_SYSTEM_PROMPT_TEMPLATE.replace("{max_length}", str(max_length))
+            + "<|im_end|>\n"
+            f"<|im_start|>user\n{_build_patch_user_text(split, edit_text)}<|im_end|>\n"
+            "<|im_start|>assistant\n" + _think_suffix(clip, thinking)
+        )
+        try:
+            tokens = clip.tokenize(chat_text, skip_template=True, min_length=1, thinking=thinking)
+        except Exception as e:
+            print(f"Mykee Prompt Modifier: patch method - tokenization failed ({type(e).__name__}: {e})")
+            return None
+        prompt_tokens = _count_prompt_tokens(tokens)
+        if prompt_tokens is None:
+            prompt_tokens = len(chat_text) // 3
+        effective_max_length = prompt_tokens + max_length
+
+        for attempt in range(2):
+            try:
+                ids = clip.generate(
+                    tokens, do_sample=sampling_mode, max_length=effective_max_length,
+                    temperature=temperature, top_k=top_k, top_p=top_p, min_p=min_p,
+                    repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
+                    seed=seed + attempt * 7919,
+                )
+                raw = _restore_think_open(clip, thinking, clip.decode(ids))
+            except Exception as e:
+                print(f"Mykee Prompt Modifier: patch method - generation failed ({type(e).__name__}: {e})")
+                return None
+            data, error = _parse_patch_json(raw, sentence_count)
+            if data is None:
+                print(f"Mykee Prompt Modifier: patch attempt {attempt + 1} rejected - {error}")
+                continue
+            text, report, changed = _apply_patch(split, data)
+            if not changed:
+                print(f"Mykee Prompt Modifier: patch attempt {attempt + 1} changed nothing")
+                continue
+            plan = data.get("analysis")
+            plan = plan.strip() if isinstance(plan, str) else ""
+            analysis = (plan + "\n\n" if plan else "") + "\n".join(report)
+            return text, analysis
+        print("Mykee Prompt Modifier: patch method failed - falling back to the rewrite method.")
+        return None
+
     def run(self, clip, edit_instruction, prompt, prompt_rewrite, system_prompt, max_length,
             sampling_mode, seed, temperature, top_k, top_p, min_p, repetition_penalty,
             presence_penalty, thinking=False, unload_after_run=False, image=None,
-            node_id=None):
+            edit_method="patch", node_id=None):
         if not prompt_rewrite:
             # Plain text-field mode: no tokenize/generate call at all, so
             # the connected clip never gets moved onto the GPU by this node.
             print("Mykee Prompt Modifier: prompt_rewrite is off - passing prompt through unchanged.")
-            return {"ui": {"response_display": [prompt]}, "result": (prompt, prompt)}
+            return {"ui": {"response_display": [prompt]}, "result": (prompt, prompt, "")}
 
         custom_sys = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         if custom_sys and "{max_length}" in custom_sys:
@@ -460,6 +793,7 @@ class MykeePromptModifier:
 
         tokens = None
         edited_prompt = None
+        analysis_text = ""
         edit_text = edit_instruction.strip() if edit_instruction and edit_instruction.strip() else ""
 
         # ---- image mode: try it first if an image is connected -----------
@@ -491,6 +825,16 @@ class MykeePromptModifier:
                 tokens = None
             except Exception as e:
                 edited_prompt = f"[image tokenization failed: {type(e).__name__}: {e}]"
+
+        # ---- text-only mode, patch method ------------------------------
+        if (tokens is None and edited_prompt is None and edit_method == "patch"
+                and not custom_sys and edit_text and prompt and prompt.strip()):
+            patched = self._patch_edit(
+                clip, prompt, edit_text, int(max_length), bool(sampling_mode), int(seed),
+                float(temperature), int(top_k), float(top_p), float(min_p),
+                float(repetition_penalty), float(presence_penalty), thinking)
+            if patched is not None:
+                edited_prompt, analysis_text = patched
 
         # ---- text-only mode: no image, or image mode above didn't run ----
         if tokens is None and edited_prompt is None:
@@ -541,7 +885,7 @@ class MykeePromptModifier:
                     presence_penalty=float(presence_penalty),
                     seed=int(seed),
                 )
-                edited_prompt = clip.decode(generated_ids)
+                edited_prompt = _restore_think_open(clip, thinking, clip.decode(generated_ids))
                 # safety net in case a thinking-capable model still emits a
                 # <think> block despite no thinking request
                 raw_output = edited_prompt
@@ -556,7 +900,19 @@ class MykeePromptModifier:
                 # that doesn't use this format).
                 extracted = _extract_final(edited_prompt)
                 if extracted is not None:
+                    analysis_text = _extract_analysis(edited_prompt)
                     edited_prompt = extracted
+                elif edited_prompt.lstrip().upper().startswith("ANALYSIS"):
+                    # the model never reached the result part (it ran out
+                    # of max_length while still planning) - the plan is not
+                    # a usable result
+                    print("Mykee Prompt Modifier: the response starts with "
+                          "ANALYSIS but has no '===FINAL===' marker.")
+                    analysis_text = edited_prompt
+                    edited_prompt = ("[the model used up its max_length "
+                                     "while still writing the ANALYSIS and "
+                                     "never reached the result - raise "
+                                     "max_length or turn thinking off]")
                 else:
                     print("Mykee Prompt Modifier: no '===FINAL===' marker "
                           "found in the model's response - using the full "
@@ -580,11 +936,15 @@ class MykeePromptModifier:
         print(f"Image connected: {image is not None}")
         print("")
         print(edited_prompt)
+        if analysis_text:
+            print("")
+            print("Analysis:")
+            print(analysis_text)
 
         if unload_after_run:
             _unload_clip(clip)
 
-        return {"ui": {"response_display": [edited_prompt]}, "result": (prompt, edited_prompt)}
+        return {"ui": {"response_display": [edited_prompt]}, "result": (prompt, edited_prompt, analysis_text)}
 
 
 NODE_CLASS_MAPPINGS = {

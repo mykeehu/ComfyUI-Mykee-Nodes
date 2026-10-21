@@ -229,6 +229,17 @@ def _empty_response_message(raw_output):
     return "the model returned an empty response"
 
 
+def _restore_think_open(clip, thinking, raw_output):
+    """When the prompt itself already ended with the opening "<think>\n"
+    (thinking on, see _think_suffix), the model's answer starts INSIDE the
+    block, so the decoded text has no opening tag. Put it back so the
+    <think>...</think> stripping treats the reasoning as one block (and an
+    unfinished block is recognised as one, not mistaken for the answer)."""
+    if _think_suffix(clip, thinking) == "<think>\n":
+        return "<think>\n" + raw_output
+    return raw_output
+
+
 def _toast(node_id, severity, summary, detail):
     """Sends a non-blocking ComfyUI toast notification instead of a hard
     error. Safe no-op if there's no running PromptServer."""
@@ -724,7 +735,7 @@ class MykeePromptAdvancedUltimate:
                 presence_penalty=float(presence_penalty),
                 seed=int(seed),
             )
-            text = clip.decode(generated_ids)
+            text = _restore_think_open(clip, thinking, clip.decode(generated_ids))
             raw_output = text
             text = re.sub(r"<think>.*?(?:</think>|$)", "", text, flags=re.DOTALL).strip()
             if not text:

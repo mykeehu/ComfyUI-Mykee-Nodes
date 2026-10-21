@@ -99,7 +99,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Prompt Advanced](documents/prompt-advanced.md) | LLM chat/instruction node with editable system prompt and optional image input. |
 | [Mykee Prompt Advanced - Prompt Modifier](documents/prompt-modifier.md) | Rewrites only the details an edit instruction addresses. |
 | [Mykee Prompt Advanced Ultimate](documents/prompt-advanced-ultimate.md) | Two-stage version: describe first, then answer/edit from the text. |
-| [Mykee MOSS Captioner (JSON)](documents/moss-captioner-json.md) | Captions images as MOSS-Image structured JSON. |
+| [Mykee JSON Captioner](documents/json-captioner.md) | Captions images as MOSS-Image layout JSON (bounding boxes) or plain captions. |
 | [Mykee Text Switch/Batch](documents/text-switch-batch.md) | Up to 49 text fields with switch or batch output. |
 | [Mykee Before/After Text Injection](documents/before-after-text-injection.md) | Adds the same text before/after many texts at once. |
 
