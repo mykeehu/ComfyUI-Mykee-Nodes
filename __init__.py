@@ -30,6 +30,7 @@ _NODE_MODULES = [
     "mykee_model_template",
     "mykee_text_switch",
     "mykee_text_injection",
+    "mykee_size_switch",
 ]
 
 NODE_CLASS_MAPPINGS = {}
