@@ -110,6 +110,7 @@ from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP,
 )
 
 try:
@@ -315,6 +316,10 @@ class MykeePromptAdvanced:
                     "default": "auto",
                     "tooltip": TEMPLATE_MODE_TOOLTIP,
                 }),
+                "thinking_budget": ("INT", {
+                    "default": 1024, "min": 0, "max": 16384, "step": 64,
+                    "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -332,7 +337,7 @@ class MykeePromptAdvanced:
     def run(self, clip, prompt, prompt_rewrite, system_prompt, max_length, sampling_mode,
             seed, temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty,
             thinking=False, unload_after_run=False, image=None, video=None, audio=None,
-            template_mode="auto", node_id=None):
+            template_mode="auto", thinking_budget=1024, node_id=None):
         if not prompt_rewrite:
             # Plain text-field mode: no tokenize/generate call at all, so
             # the connected clip never gets moved onto the GPU by this node.
@@ -383,7 +388,8 @@ class MykeePromptAdvanced:
             try:
                 raw_output = generate_text(
                     clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
-                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                    thinking_budget)
                 # the thinking block never stays in the answer; it is
                 # returned separately (also when thinking was not asked for
                 # but a thinking-capable model produced one anyway)

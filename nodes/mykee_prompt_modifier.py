@@ -95,6 +95,7 @@ import re
 from .mykee_llm_common import (
     empty_response_message, generate_text, generation_error_hint, media_preamble,
     split_thinking, tokenize_for, unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP,
 )
 
 try:
@@ -697,6 +698,10 @@ class MykeePromptModifier:
                     "default": "auto",
                     "tooltip": TEMPLATE_MODE_TOOLTIP,
                 }),
+                "thinking_budget": ("INT", {
+                    "default": 1024, "min": 0, "max": 16384, "step": 64,
+                    "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -715,7 +720,7 @@ class MykeePromptModifier:
 
     def _patch_edit(self, clip, prompt, edit_text, max_length, sampling_mode, seed, temperature,
                     top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
-                    template_mode="auto"):
+                    template_mode="auto", thinking_budget=0):
         """Patch method. Returns (edited_prompt, analysis, thinking_text) or
         None when the classic rewrite should be used instead (nothing to
         patch, bad JSON twice, or the model changed nothing)."""
@@ -737,7 +742,8 @@ class MykeePromptModifier:
             try:
                 raw = generate_text(
                     clip, tokens, chat_text, max_length, sampling_mode, seed + attempt * 7919,
-                    temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                    temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                    thinking_budget)
             except Exception as e:
                 print(f"Mykee Prompt Modifier: patch method - generation failed ({type(e).__name__}: {e})")
                 return None
@@ -760,7 +766,7 @@ class MykeePromptModifier:
     def run(self, clip, edit_instruction, prompt, prompt_rewrite, system_prompt, max_length,
             sampling_mode, seed, temperature, top_k, top_p, min_p, repetition_penalty,
             presence_penalty, thinking=False, unload_after_run=False, image=None,
-            edit_method="patch", video=None, audio=None, template_mode="auto", node_id=None):
+            edit_method="patch", video=None, audio=None, template_mode="auto", thinking_budget=1024, node_id=None):
         if not prompt_rewrite:
             # Plain text-field mode: no tokenize/generate call at all, so
             # the connected clip never gets moved onto the GPU by this node.
@@ -787,7 +793,8 @@ class MykeePromptModifier:
             patched = self._patch_edit(
                 clip, prompt, edit_text, int(max_length), bool(sampling_mode), int(seed),
                 float(temperature), int(top_k), float(top_p), float(min_p),
-                float(repetition_penalty), float(presence_penalty), thinking, template_mode)
+                float(repetition_penalty), float(presence_penalty), thinking, template_mode,
+                int(thinking_budget))
             if patched is not None:
                 edited_prompt, analysis_text, thinking_text = patched
 
@@ -833,7 +840,8 @@ class MykeePromptModifier:
                 try:
                     raw_output = generate_text(
                         clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
-                        top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                        top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                        thinking_budget)
                     # the thinking block never stays in the result; it is
                     # returned separately
                     edited_prompt, thinking_text = split_thinking(raw_output)
@@ -859,7 +867,7 @@ class MykeePromptModifier:
                         edited_prompt = ("[the model used up its max_length "
                                          "while still writing the ANALYSIS and "
                                          "never reached the result - raise "
-                                         "max_length or turn thinking off]")
+                                         "max_length or thinking_budget, or turn thinking off]")
                     else:
                         print("Mykee Prompt Modifier: no '===FINAL===' marker "
                               "found in the model's response - using the full "

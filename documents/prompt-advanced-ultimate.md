@@ -88,6 +88,10 @@ the marker, `tags_1` stays empty.)
   **second_seed_control** (fixed / increment / decrement / randomize) is
   the node's own equivalent of ComfyUI's *control after generate*: after
   each run it updates `second_seed` for the next one.
+- **thinking_budget**, **second_thinking_budget**, **template_mode**
+  (optional) - extra tokens for each stage's thinking (default 1024 / 512)
+  and the chat-template mode; see
+  [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio).
 - **unload_after_run** - frees `clip` from VRAM once, after both stages
   have finished.
 

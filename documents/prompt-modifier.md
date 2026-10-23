@@ -61,6 +61,8 @@ sense with it off is fixed too, not left dangling.
   rewritten, the tag list is always returned). `classic` is the original
   first-version system prompt, kept verbatim, also a whole-text rewrite.
 - **image** (optional) - switches the node into image-edit mode.
+- **thinking_budget**, **template_mode** (optional) - as in
+  [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio).
 - **video**, **audio** (optional, Gemma 4) - same idea as the image: the
   model's description of the video / audio with the edit applied. See
   [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio).

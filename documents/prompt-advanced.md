@@ -87,6 +87,11 @@ flag and the image / video / audio tokens - exactly like ComfyUI's built-in
 saw the image and answered with nonsense.) Every other model now goes the
 same way by default, see **template_mode** below.
 
+- **thinking_budget** (optional, default 1024) - extra tokens added on top
+  of `max_length` while `thinking` is on. The reasoning is generated before
+  the answer and uses the same token budget, so a long thought could leave
+  no room for the answer; this gives the thinking its own room. No effect
+  with `thinking` off. Raise it if the answer comes back empty or cut off.
 - **template_mode** (optional) - `auto` (default): ComfyUI's own tokenizer
   builds the model's chat template, so the node follows whatever templates
   ComfyUI knows (Gemma 4, Qwen3-VL, Qwen3.5, ...); if that fails for the

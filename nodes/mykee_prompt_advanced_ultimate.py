@@ -159,6 +159,7 @@ from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP,
 )
 
 try:
@@ -614,6 +615,14 @@ class MykeePromptAdvancedUltimate:
                     "default": "auto",
                     "tooltip": TEMPLATE_MODE_TOOLTIP,
                 }),
+                "thinking_budget": ("INT", {
+                    "default": 1024, "min": 0, "max": 16384, "step": 64,
+                    "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
+                "second_thinking_budget": ("INT", {
+                    "default": 512, "min": 0, "max": 16384, "step": 64,
+                    "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -632,7 +641,7 @@ class MykeePromptAdvancedUltimate:
     def _generate_stage(self, clip, make_prompts, image, video, audio, max_length, sampling_mode,
                          seed, temperature, top_k, top_p, min_p,
                          repetition_penalty, presence_penalty, thinking,
-                         stage_label, node_id, template_mode="auto"):
+                         stage_label, node_id, template_mode="auto", thinking_budget=0):
         """Shared tokenize+generate+decode call for one stage. Returns
         (answer, thinking_text, media_kind_used). The answer is the
         decoded text with the thinking block split off (or a bracketed [...]
@@ -650,7 +659,8 @@ class MykeePromptAdvancedUltimate:
         try:
             raw_output = generate_text(
                 clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
-                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                thinking_budget)
             text, thinking_text = split_thinking(raw_output)
             if not text:
                 text = f"[{stage_label}: {empty_response_message(raw_output)}]"
@@ -670,7 +680,7 @@ class MykeePromptAdvancedUltimate:
             second_temperature, second_top_k, second_top_p, second_min_p,
             second_repetition_penalty, second_presence_penalty, second_thinking,
             unload_after_run=False, image=None, video=None, audio=None,
-            template_mode="auto", node_id=None):
+            template_mode="auto", thinking_budget=1024, second_thinking_budget=512, node_id=None):
 
         second_prompt_text = second_prompt.strip() if second_prompt and second_prompt.strip() else ""
 
@@ -717,7 +727,7 @@ class MykeePromptAdvancedUltimate:
         response_1, thinking_1, used_kind_1 = self._generate_stage(
             clip, make_prompts_1, image, video, audio, max_length, sampling_mode, seed, temperature,
             top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
-            "Stage 1", node_id, template_mode,
+            "Stage 1", node_id, template_mode, thinking_budget,
         )
 
         # ---- stage 2 (text-only; only runs if enabled and non-empty) ---
@@ -740,7 +750,7 @@ class MykeePromptAdvancedUltimate:
                 second_max_length, second_sampling_mode, second_seed,
                 second_temperature, second_top_k, second_top_p, second_min_p,
                 second_repetition_penalty, second_presence_penalty, second_thinking,
-                "Stage 2", node_id, template_mode,
+                "Stage 2", node_id, template_mode, second_thinking_budget,
             )
             # edit mode's default system prompt (and any custom one using
             # the same convention) forces the model to write an ANALYSIS

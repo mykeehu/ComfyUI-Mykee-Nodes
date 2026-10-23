@@ -300,9 +300,17 @@ def completion_budget(clip, tokens, max_length, chat_text):
 
 
 def generate_text(clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
-                  top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking):
+                  top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                  thinking_budget=0):
     """clip.generate() + decode. Returns the raw decoded text (still
-    containing any <think>...</think> block - use split_thinking())."""
+    containing any <think>...</think> block - use split_thinking()).
+
+    thinking_budget: extra tokens added on top of max_length when thinking
+    is on. The reasoning is generated BEFORE the answer and eats from the
+    same token budget, so without extra room a long thought leaves nothing
+    (or too little) for the answer itself."""
+    if thinking:
+        max_length = int(max_length) + max(0, int(thinking_budget))
     generated_ids = clip.generate(
         tokens,
         do_sample=bool(sampling_mode),
@@ -420,9 +428,18 @@ def split_thinking(text):
 def empty_response_message(raw_output):
     """Explain WHY the stripped response is empty."""
     if "<think>" in raw_output and "</think>" not in raw_output:
-        return ("the model used up its max_length budget while still "
-                "thinking - raise max_length or turn thinking off")
+        return ("the model used up its token budget while still thinking - "
+                "raise thinking_budget (or max_length) or turn thinking off")
     return "the model returned an empty response"
+
+
+THINKING_BUDGET_TOOLTIP = (
+    "Extra tokens added on top of max_length while thinking is on. The "
+    "model's reasoning is generated before the answer and uses the same "
+    "token budget, so a long thought can leave no room for the answer - "
+    "this gives the thinking its own room. Has no effect when thinking is "
+    "off. Raise it if the answer comes back empty or cut off while thinking."
+)
 
 
 def generation_error_hint(media_used):
