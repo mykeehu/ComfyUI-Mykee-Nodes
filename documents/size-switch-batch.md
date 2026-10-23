@@ -2,6 +2,10 @@
 
 [← Back to the main README](../README.md)  ·  Category: `Mykee/Image`
 
+<p align="center">
+  <img src="../images/size-switch-batch.png" alt="Mykee/Image - Mykee Size Switch/Batch">
+</p>
+
 Up to 32 width/height pairs on one node, each pair with a selector. Works like
 [Mykee Text Switch/Batch](text-switch-batch.md), but with sizes. Only one pair
 is shown by default.
