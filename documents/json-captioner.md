@@ -52,6 +52,25 @@ the single description that is used: `summary.caption` in layout mode, the
 caption in caption mode. MOSS recommends Qwen3.5 (27B / 35B-A3B) or Gemma 4
 and says that **thinking** gives more accurate captions.
 
+**caption_length = detailed** is a different kind of description: instead of
+one of the MOSS JSON captions, the node makes one extra free-text call with
+its own built-in system prompt and gets a very detailed description in
+paragraphs (type/style/camera and summary, people and clothing, nudity and
+explicit actions, poses and spatial relations, background/light/mood). It
+follows **explicit_detail**: with the switch ON the full prompt is used
+(five paragraphs, including the adult-content paragraph and all the
+body-part rules); with it OFF the same prompt is loaded without the explicit
+parts (four paragraphs, no nudity / genitalia rules). Your **reference** and
+**tag_list** are passed as the user message, which the prompt tells the model
+to work in. The detailed prompt is self-sufficient, so the explicit scan call
+is skipped. In layout mode the detailed text becomes `summary.caption` and
+is also used as the caption the item/box call builds on; in caption mode it
+is the caption (an additional MOSS call still supplies the watermark and
+borders outputs). A custom **system_prompt** replaces the built-in detailed
+prompt: it is what runs for the description (its `{max_length}` and
+`{{reference}}`-style placeholders are filled in), and the JSON formatting
+and processing around it stay the node's own.
+
 What it does on top of a plain Prompt Advanced call:
 
 - **Validates the answer** (Markdown fences and trailing chatter are
@@ -69,7 +88,7 @@ What it does on top of a plain Prompt Advanced call:
 
 - **clip, image** - a generation-capable VL clip (for example Qwen3.5-9B
   through the normal Load CLIP node) and the image(s).
-- **mode, caption_length** - see above.
+- **mode, caption_length** - see above (long / medium / short / detailed).
 - **explicit_detail** - on (default): the node first makes an extra **scan
   call** that looks only for adult / explicit content and names it plainly
   in anatomical language - exposed body parts with their size, shape and
@@ -117,8 +136,15 @@ What it does on top of a plain Prompt Advanced call:
   extra items are cut, and with a tag list the tags come first. 0 = no limit
   (a ceiling of 60 applies).
 - **image_megapixels** - downscale limit for the model's input, 0 = as is.
-- **thinking** - lets Qwen3.5 reason first. Raise **max_length**: the
-  thinking text uses the same budget.
+- **thinking** - lets Qwen3.5 / Gemma 4 reason first. The thinking text uses
+  the same token budget as the answer; **thinking_budget** (optional, default
+  1024) adds room for it on top of **max_length**.
+- **template_mode** (optional) - `auto` (default): a Gemma 4 clip gets
+  ComfyUI's native chat template (text first, image after it); Qwen-style
+  clips keep the hand-built MOSS ChatML text (text first, then the image).
+  `native`: ComfyUI's template for any clip (it puts the image *before* the
+  text). `legacy_chatml`: always the hand-built Qwen text (not usable with
+  Gemma 4).
 - **max_length, retries, sampling_mode, seed, temperature, top_k, top_p,
   min_p, repetition_penalty, presence_penalty** - generation controls
   (defaults follow MOSS's captioning setup).

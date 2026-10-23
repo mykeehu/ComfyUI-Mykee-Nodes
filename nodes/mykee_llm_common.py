@@ -125,11 +125,12 @@ TEMPLATE_MODE_TOOLTIP = (
 )
 
 
-def _qwen_chat_text(sys_text, user_text, with_image):
+def _qwen_chat_text(sys_text, user_text, with_image, image_after_text=False):
     vision = "<|vision_start|><|image_pad|><|vision_end|>" if with_image else ""
+    system = f"<|im_start|>system\n{sys_text}<|im_end|>\n" if sys_text else ""
+    user = f"{user_text}{vision}" if image_after_text else f"{vision}{user_text}"
     return LegacyChatText(
-        f"<|im_start|>system\n{sys_text}<|im_end|>\n"
-        f"<|im_start|>user\n{vision}{user_text}<|im_end|>\n"
+        f"{system}<|im_start|>user\n{user}<|im_end|>\n"
         f"<|im_start|>assistant\n"
     )
 
@@ -190,7 +191,7 @@ def _tokenize_native(clip, sys_text, user_text, image, video, audio, thinking):
     return tokens, f"{sys_text}\n{user_text}", notes
 
 
-def _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking):
+def _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking, image_after_text=False):
     """Qwen-style ChatML built by hand, image only."""
     notes = []
     if image is None and (video is not None or audio is not None):
@@ -204,7 +205,7 @@ def _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking):
 
     suffix = qwen35_think_suffix(clip, thinking)
     if image is not None:
-        chat_text = LegacyChatText(_qwen_chat_text(sys_text, user_text, True) + suffix)
+        chat_text = LegacyChatText(_qwen_chat_text(sys_text, user_text, True, image_after_text) + suffix)
         try:
             tokens = clip.tokenize(chat_text, image=image, skip_template=True, min_length=1, thinking=thinking)
             return tokens, chat_text, notes
@@ -218,7 +219,7 @@ def _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking):
 
 
 def tokenize_chat(clip, sys_text, user_text, image=None, video=None, audio=None,
-                  thinking=False, template_mode="auto"):
+                  thinking=False, template_mode="auto", image_after_text=False):
     """Tokenize one system+user turn for generation.
 
     Returns (tokens, chat_text, notes):
@@ -228,6 +229,8 @@ def tokenize_chat(clip, sys_text, user_text, image=None, video=None, audio=None,
       notes     - list of short human-readable warnings (shown as toasts).
 
     template_mode: see TEMPLATE_MODES / TEMPLATE_MODE_TOOLTIP.
+    image_after_text: legacy ChatML only - put the image placeholder after
+    the user text instead of before it (the order MOSS captioning uses).
 
     Raises MediaNotSupported when the clip can't take the media, and
     whatever clip.tokenize() raises for a real failure."""
@@ -237,7 +240,7 @@ def tokenize_chat(clip, sys_text, user_text, image=None, video=None, audio=None,
             notes.append("Gemma 4 can't use the legacy ChatML text - the native template was used.")
         return tokens, chat_text, notes
     if template_mode == "legacy_chatml":
-        return _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking)
+        return _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking, image_after_text)
     if template_mode == "native":
         return _tokenize_native(clip, sys_text, user_text, image, video, audio, thinking)
     # auto: native first, old ChatML text if the native call blows up
@@ -246,7 +249,7 @@ def tokenize_chat(clip, sys_text, user_text, image=None, video=None, audio=None,
     except MediaNotSupported:
         raise
     except Exception as e:
-        tokens, chat_text, notes = _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking)
+        tokens, chat_text, notes = _tokenize_legacy(clip, sys_text, user_text, image, video, audio, thinking, image_after_text)
         notes.append(f"ComfyUI's native template failed for this clip ({type(e).__name__}: {e}) - used the legacy ChatML text.")
         return tokens, chat_text, notes
 

@@ -26,8 +26,13 @@ prompt. Two modes:
            (box_2d, normalized 0-1000) and borders, which come out as
            separate outputs.
 
-`caption_length` (long / medium / short) picks which single description is
-used - as summary.caption in layout mode, as the caption in caption mode.
+`caption_length` (long / medium / short / detailed) picks which single
+description is used - as summary.caption in layout mode, as the caption in
+caption mode. "detailed" is a separate free-text call with its own built-in
+system prompt (DETAILED_SYSTEM_PROMPT_EXPLICIT, or the _SAFE version without
+the adult-content parts when explicit_detail is off); a custom system_prompt
+replaces that built-in prompt, and the JSON formatting / processing stay the
+node's own.
 
 On top of a plain "Prompt Advanced" call the node:
   * parses and VALIDATES the model's JSON (code fences and trailing chatter
@@ -39,10 +44,16 @@ On top of a plain "Prompt Advanced" call the node:
     models the full-resolution image (up to ~12.8 MP), which costs a lot of
     tokens and VRAM; the max_length budget accounts for the image tokens
 
-Qwen3.5 thinks by default; the node adds the same <think> prefix ComfyUI's
-own chat template would (see _think_suffix). MOSS recommends thinking for
-more accurate captions - turn `thinking` on and raise max_length (the
-thinking text counts against it).
+GEMMA 4: a Gemma 4 clip always gets ComfyUI's own native chat template (the
+system prompt, thinking flag and image tokens are built by ComfyUI's Gemma 4
+tokenizer, text first and the image after it - the same order MOSS uses).
+Qwen-style clips keep the hand-built ChatML text MOSS uses (text first, then
+the image) in template_mode "auto"; "native" lets ComfyUI's template decide
+instead (it puts the image first). See mykee_llm_common.py.
+
+MOSS recommends thinking for more accurate captions - turn `thinking` on;
+thinking_budget tokens are added on top of max_length while it is on (the
+thinking text uses the same token budget as the answer).
 
 Outputs (all lists, one entry per image):
   json, caption, watermark, borders, width, height, bbox_preview
@@ -54,6 +65,11 @@ Outputs (all lists, one entry per image):
 import json
 import math
 import re
+
+from .mykee_llm_common import (
+    LegacyChatText, MediaNotSupported, TEMPLATE_MODES, THINKING_BUDGET_TOOLTIP, generate_text,
+    is_gemma4, tokenize_chat,
+)
 
 try:
     import torch
@@ -174,11 +190,12 @@ _LENGTH_RULES = {
     "short": "One sentence that summarizes the main subject, action or relationship.",
     "medium": "One paragraph.",
     "long": "A detailed description; several paragraphs are allowed.",
+    "detailed": "A very detailed description in several paragraphs (people, clothing, pose, setting, light, mood).",
 }
 _LABELS = ("object", "character", "text")
 _BORDER_VALUES = ("left", "right", "up", "down", "none")
-_THINK_BUDGET_ERROR = ("the model used up its max_length budget while still "
-                       "thinking - raise max_length or turn thinking off")
+_THINK_BUDGET_ERROR = ("the model used up its token budget while still "
+                       "thinking - raise max_length or thinking_budget, or turn thinking off")
 
 
 def _unload_clip(clip):
@@ -218,42 +235,6 @@ def _toast(node_id, severity, summary, detail):
         )
     except Exception:
         pass  # a failed notification must never break the actual node
-
-
-def _think_suffix(clip, thinking):
-    """Assistant-turn suffix for Qwen3.5-family clips.
-
-    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
-    control text when it applies its own chat template, and that is
-    skipped here because this node builds the chat text itself (it starts
-    with "<|im_start|>"). Add exactly what ComfyUI's template would add -
-    for Qwen3.5 clips only; every other model is left untouched.
-    """
-    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
-        if "qwen35" in type(obj).__name__.lower():
-            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
-    return ""
-
-
-def _restore_think_open(clip, thinking, raw_output):
-    """When the prompt itself already ended with the opening "<think>\n"
-    (thinking on, see _think_suffix), the model's answer starts INSIDE the
-    block, so the decoded text has no opening tag. Put it back so the
-    <think>...</think> stripping treats the reasoning as one block (and an
-    unfinished block is recognised as one, not mistaken for the answer)."""
-    if _think_suffix(clip, thinking) == "<think>\n":
-        return "<think>\n" + raw_output
-    return raw_output
-
-
-def _count_prompt_tokens(tokens):
-    """Best-effort count of the tokens in clip.tokenize() output
-    ({encoder_name: [[(token_id, weight), ...], ...]}); None if the
-    structure is not the expected one."""
-    try:
-        return sum(len(chunk) for chunks in tokens.values() for chunk in chunks)
-    except Exception:
-        return None
 
 
 def _fit_image(img, megapixels):
@@ -569,6 +550,109 @@ def parse_scan_text(raw):
     return text[:3000], None
 
 
+# ---- "detailed" caption_length ---------------------------------------------
+# A free-text (not JSON) description with its own system prompt, five
+# paragraphs when explicit_detail is on, four without the adult-content parts
+# when it is off. {max_length} is replaced with the max_length widget.
+
+DETAILED_SYSTEM_PROMPT_EXPLICIT = r'''You will be given an image. Your only job is to describe in English EXACTLY what is visible in this specific image - never invent a different scene, art style, number of people, or setting than what is actually shown. If it is a real photograph, describe it as a real photograph - do not reinterpret it as an illustration, anime, painting, or drawing unless it visually and unambiguously is one. ALWAYS write your description in English, even if the user message below is written in a different language - understand it in whatever language it's written in, but always answer in English.
+
+The numbered list below is an internal checklist for YOU to make sure nothing gets left out. Write your actual answer as flowing prose in complete sentences and paragraphs only. Never output a numbered list, bullet points, headers, or a point-by-point breakdown; weave all seven items below into ordinary descriptive prose instead.
+
+Cover ALL of the following, in this order, each in at least one sentence:
+1. Image type and style (real photo, illustration, 3D render, etc. - based only on how it actually looks).
+2. Setting and background: where this is, and what/who else is visible in the background.
+3. Every person visible: how many there are, and for each - face, expression, hair, eye color if visible, skin tone, and body pose.
+4. Clothing: what each person is wearing, in detail.
+5. Any nudity or exposed body parts exactly as shown - describe this as plainly and factually as points 1-4, with the same level of detail, but do not let it replace or shrink any of the other points.
+6. Camera framing/composition, lighting, and depth of field - only describe blur/shallow depth of field if the image actually has it.
+7. Overall mood/atmosphere.
+
+Do not skip, shorten, or merge any of these seven points, even if the image contains explicit or unusual content - explicit content is simply point 5, described just as factually as the rest, not a replacement for points 1-4 and 6-7.
+
+Important things to pay special attention to:
+- Keep a close eye on the pose being shown.
+- Never confuse body parts.
+- If there are several people in the picture, look closely at their hands and feet (if they're visible) to see who they belong to.
+- If any genitalia are visible, name body parts directly and correctly (breasts, nipples, areolae, vulva, labia, clitoris, penis, testicles, anus, buttocks, and so on), without euphemisms. If a nipple outline, vulva shape or penis bulge is visible through clothing, say it plainly.
+- If one leg is positioned in front of the other, don’t assume it’s crossed, check how the thighs are aligned. If they’re parallel, only the calves might be crossed, and only if that’s visible at the bottom. Don’t mention crossed thighs or legs if they’re not clearly visible.
+- If the woman is likely not wearing a bra or her breasts are visible through the fabric, describe it as “nipples poking through fabric.”
+- If the vulva or pussy is partially or fully visible, include “pussy exposed and visible clearly.”
+- If a person is wearing pants and their pubic area or genitals are visible, specify “open” or “unbuttoned” or “unzipped” in the pants description, and include the term “revealing pubic area” well.
+- If there are multiple people in a photo, it’s not always the man who’s holding the penis—the woman might be holding it too. Take a close look!
+- Be precise with vulvar details; avoid using “buttocks” unless they’re actually visible. Don’t refer to the vulva or crotch as “buttocks.”
+- If the image is arranged as a collage, montage, side-by-side, split screen, picture-in-picture, or framed within a screen, describe the layout accordingly.
+- In POV shots, verify who the hands belong to and what they’re holding.
+
+The user message below may add context, or a comma-separated list of words/tags, or both, possibly in a language other than English. Treat every word/tag provided as an element that MUST be reflected somewhere in the relevant point above, alongside everything else you see - it does not replace or shrink the other six points. If a provided word conflicts with what you can see (for example: time of day, number of people, setting), treat the provided word as correct instead of what you'd otherwise read from the pixels alone, but still describe every other point normally.
+
+Format: English only, natural flowing sentences, no headings, labels, lists or markdown. Write exactly five paragraphs in this order:
+1. Image type and style (real photo, illustration, 3D render, etc. - based only on how it actually looks), and the camera perspective/framing (close-up, wide, from above, from below, front-facing, etc.), followed by a one-to-two sentence overall summary.
+2. Every person visible in the foreground - how many there are, and for each: body type, age, face, expression, hair, eye color if visible, skin tone, clothing (described in detail).
+3. Any nudity or exposed body parts, and any explicit or sexual actions, exactly as shown - describe this as plainly and factually as the other sections, with the same level of detail, but do not let it replace or shrink the other sections. Don't write a pose in this paragraph.
+4. For each person in the foreground: describe their body pose and their spatial relationship to one another and the frame.
+5. Where this is, what/who else is visible in the background, the lighting and depth of field (only mention blur/shallow depth of field if the image actually has it), and the overall mood/atmosphere.
+Output only the description, avoid repeating identical details.
+
+Remember: output flowing prose only, no lists, bullets, or headers, and your entire response must be in English regardless of what language the image or the user message uses. Keep your entire response under {max_length} tokens, and make sure it ends as a complete sentence - do not run out of room mid-sentence.'''
+
+DETAILED_SYSTEM_PROMPT_SAFE = r'''You will be given an image. Your only job is to describe in English EXACTLY what is visible in this specific image - never invent a different scene, art style, number of people, or setting than what is actually shown. If it is a real photograph, describe it as a real photograph - do not reinterpret it as an illustration, anime, painting, or drawing unless it visually and unambiguously is one. ALWAYS write your description in English, even if the user message below is written in a different language - understand it in whatever language it's written in, but always answer in English.
+
+The numbered list below is an internal checklist for YOU to make sure nothing gets left out. Write your actual answer as flowing prose in complete sentences and paragraphs only. Never output a numbered list, bullet points, headers, or a point-by-point breakdown; weave all six items below into ordinary descriptive prose instead.
+
+Cover ALL of the following, in this order, each in at least one sentence:
+1. Image type and style (real photo, illustration, 3D render, etc. - based only on how it actually looks).
+2. Setting and background: where this is, and what/who else is visible in the background.
+3. Every person visible: how many there are, and for each - face, expression, hair, eye color if visible, skin tone, and body pose.
+4. Clothing: what each person is wearing, in detail.
+5. Camera framing/composition, lighting, and depth of field - only describe blur/shallow depth of field if the image actually has it.
+6. Overall mood/atmosphere.
+
+Do not skip, shorten, or merge any of these six points.
+
+Important things to pay special attention to:
+- Keep a close eye on the pose being shown.
+- Never confuse body parts.
+- If there are several people in the picture, look closely at their hands and feet (if they're visible) to see who they belong to.
+- If one leg is positioned in front of the other, don’t assume it’s crossed, check how the thighs are aligned. If they’re parallel, only the calves might be crossed, and only if that’s visible at the bottom. Don’t mention crossed thighs or legs if they’re not clearly visible.
+- If the image is arranged as a collage, montage, side-by-side, split screen, picture-in-picture, or framed within a screen, describe the layout accordingly.
+- In POV shots, verify who the hands belong to and what they’re holding.
+
+The user message below may add context, or a comma-separated list of words/tags, or both, possibly in a language other than English. Treat every word/tag provided as an element that MUST be reflected somewhere in the relevant point above, alongside everything else you see - it does not replace or shrink the other points. If a provided word conflicts with what you can see (for example: time of day, number of people, setting), treat the provided word as correct instead of what you'd otherwise read from the pixels alone, but still describe every other point normally.
+
+Format: English only, natural flowing sentences, no headings, labels, lists or markdown. Write exactly four paragraphs in this order:
+1. Image type and style (real photo, illustration, 3D render, etc. - based only on how it actually looks), and the camera perspective/framing (close-up, wide, from above, from below, front-facing, etc.), followed by a one-to-two sentence overall summary.
+2. Every person visible in the foreground - how many there are, and for each: body type, age, face, expression, hair, eye color if visible, skin tone, clothing (described in detail).
+3. For each person in the foreground: describe their body pose and their spatial relationship to one another and the frame.
+4. Where this is, what/who else is visible in the background, the lighting and depth of field (only mention blur/shallow depth of field if the image actually has it), and the overall mood/atmosphere.
+Output only the description, avoid repeating identical details.
+
+Remember: output flowing prose only, no lists, bullets, or headers, and your entire response must be in English regardless of what language the image or the user message uses. Keep your entire response under {max_length} tokens, and make sure it ends as a complete sentence - do not run out of room mid-sentence.'''
+
+
+def _detailed_user_text(reference, tags):
+    """User turn of the detailed call: the notes and tags (the system prompt
+    says how to use them), or a plain request."""
+    parts = []
+    if reference and reference.strip():
+        parts.append(reference.strip())
+    if tags:
+        parts.append(", ".join(tags))
+    return "\n".join(parts) if parts else "Describe this image in full detail."
+
+
+def parse_detailed_text(raw):
+    """The detailed caption is free text; only thinking leftovers and code
+    fences are stripped. Returns (text, None) or (None, error)."""
+    if "<think>" in raw and "</think>" not in raw:
+        return None, _THINK_BUDGET_ERROR
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    if not text:
+        return None, "the detailed caption was empty"
+    return text, None
+
+
 def _scene_rule(explicit):
     """Extra caption rule: relative scale, and (optionally) explicit detail."""
     return _SCALE_RULE + (" " + _EXPLICIT_RULE if explicit else "")
@@ -824,11 +908,20 @@ class MykeeJsonCaptioner:
                                "caption: plain caption text of the chosen "
                                "length (plus watermark/borders outputs).",
                 }),
-                "caption_length": (["long", "medium", "short"], {
+                "caption_length": (["long", "medium", "short", "detailed"], {
                     "default": "long",
                     "tooltip": "Which single description is used: "
                                "summary.caption in layout mode, the "
-                               "caption in caption mode.",
+                               "caption in caption mode. detailed: a "
+                               "separate, very detailed free-text "
+                               "description (four paragraphs; five with "
+                               "explicit_detail on, which adds the "
+                               "adult-content paragraph and rules) written "
+                               "with its own built-in system prompt - or "
+                               "with your system_prompt, if you fill one "
+                               "in. It takes one extra model call per "
+                               "image, and replaces the explicit scan "
+                               "call.",
                 }),
                 "explicit_detail": ("BOOLEAN", {
                     "default": True, "label_on": "on", "label_off": "off",
@@ -931,10 +1024,10 @@ class MykeeJsonCaptioner:
                 }),
                 "thinking": ("BOOLEAN", {
                     "default": False, "label_on": "on", "label_off": "off",
-                    "tooltip": "Let a thinking model (Qwen3.5) reason first. "
-                               "MOSS recommends it for more accurate "
-                               "captions; raise max_length, the thinking "
-                               "text uses the same budget.",
+                    "tooltip": "Let a thinking model (Qwen3.5, Gemma 4) reason "
+                               "first. MOSS recommends it for more accurate "
+                               "captions; thinking_budget adds room for the "
+                               "reasoning on top of max_length.",
                 }),
                 "max_length": ("INT", {
                     "default": 4096, "min": 256, "max": 16384, "step": 64,
@@ -994,6 +1087,23 @@ class MykeeJsonCaptioner:
                                "is done, without touching other models.",
                 }),
             },
+            "optional": {
+                "template_mode": (TEMPLATE_MODES, {
+                    "default": "auto",
+                    "tooltip": "auto (default): a Gemma 4 clip gets ComfyUI's "
+                               "native chat template; Qwen-style clips keep "
+                               "the hand-built MOSS ChatML text (text first, "
+                               "then the image). native: ComfyUI's own "
+                               "template for any clip (it puts the image "
+                               "BEFORE the text). legacy_chatml: always the "
+                               "hand-built Qwen text (not usable with "
+                               "Gemma 4).",
+                }),
+                "thinking_budget": ("INT", {
+                    "default": 1024, "min": 0, "max": 16384, "step": 64,
+                    "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
+            },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
 
@@ -1005,48 +1115,41 @@ class MykeeJsonCaptioner:
 
     def _generate_json(self, clip, img, prompt_text, parse_fn, thinking, max_length,
                        retries, sampling_mode, seed, temperature, top_k, top_p,
-                       min_p, repetition_penalty, presence_penalty, system_text=""):
+                       min_p, repetition_penalty, presence_penalty, system_text="",
+                       template_mode="auto", thinking_budget=0):
         """Run the model on one NHWC image until parse_fn(raw) accepts the
         answer. Returns (obj, error, last_raw)."""
-        # MOSS sends the text first, then the image, in one user turn.
-        chat_text = (
-            (f"<|im_start|>system\n{system_text}<|im_end|>\n" if system_text else "")
-            + f"<|im_start|>user\n{prompt_text}"
-            "<|vision_start|><|image_pad|><|vision_end|><|im_end|>\n"
-            "<|im_start|>assistant\n"
-            + _think_suffix(clip, thinking)
-        )
+        # MOSS sends the text first, then the image, in one user turn. For
+        # Qwen-style clips that is the hand-built ChatML text ("auto" keeps
+        # it); a Gemma 4 clip always uses ComfyUI's native template, which
+        # also puts the text first and the image after it.
+        mode = template_mode
+        if mode == "auto" and not is_gemma4(clip):
+            mode = "legacy_chatml"
         try:
-            tokens = clip.tokenize(chat_text, image=img, skip_template=True, min_length=1, thinking=thinking)
-        except TypeError:
+            tokens, chat_text, notes = tokenize_chat(
+                clip, system_text, prompt_text, image=img, thinking=thinking, template_mode=mode,
+                image_after_text=True)
+        except MediaNotSupported:
             return None, "the connected clip doesn't support image input (not a VL model)", ""
         except Exception as e:
             return None, f"tokenization failed: {type(e).__name__}: {e}", ""
 
-        prompt_tokens = _count_prompt_tokens(tokens)
-        if prompt_tokens is None:
-            prompt_tokens = len(chat_text) // 3
-        # max_length is a TOTAL budget (prompt + completion), and the single
-        # <|image_pad|> placeholder expands into the image's tokens.
-        effective_max_length = prompt_tokens + _estimate_image_tokens(img) + int(max_length)
+        # Hand-built text: max_length is a TOTAL budget (prompt + completion)
+        # on the ComfyUI build this was tested on, and the single
+        # <|image_pad|> placeholder expands into the image's tokens - generate_text()
+        # adds the prompt part, the image part is added here. The native
+        # template counts completion tokens only.
+        image_extra = _estimate_image_tokens(img) if isinstance(chat_text, LegacyChatText) else 0
 
         error, raw = "no attempt was made", ""
         for attempt in range(int(retries) + 1):
             attempt_seed = (int(seed) + attempt * 7919) % (2 ** 63)
             try:
-                generated_ids = clip.generate(
-                    tokens,
-                    do_sample=bool(sampling_mode),
-                    max_length=effective_max_length,
-                    temperature=float(temperature),
-                    top_k=int(top_k),
-                    top_p=float(top_p),
-                    min_p=float(min_p),
-                    repetition_penalty=float(repetition_penalty),
-                    presence_penalty=float(presence_penalty),
-                    seed=attempt_seed,
-                )
-                raw = _restore_think_open(clip, thinking, clip.decode(generated_ids))
+                raw = generate_text(
+                    clip, tokens, chat_text, int(max_length) + image_extra, sampling_mode,
+                    attempt_seed, temperature, top_k, top_p, min_p, repetition_penalty,
+                    presence_penalty, thinking, thinking_budget)
             except Exception as e:
                 return None, (f"generation failed: {type(e).__name__}: {e}. Make sure "
                               "'clip' is a generation-capable VL chat model."), raw
@@ -1060,10 +1163,14 @@ class MykeeJsonCaptioner:
             tag_mode, tags_to_prompt, separate_caption, system_prompt, canvas_megapixels, max_items,
             image_megapixels, thinking, max_length, retries, sampling_mode, seed,
             temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty,
-            pretty_json, unload_after_run, node_id=None):
+            pretty_json, unload_after_run, template_mode="auto", thinking_budget=1024, node_id=None):
         max_items = int(max_items) if max_items and int(max_items) > 0 else 60
         ref = reference.strip() if reference and reference.strip() else "(none)"
         custom = system_prompt if system_prompt and system_prompt.strip() else None
+        # detailed: a free-text description step. A custom system_prompt, if
+        # set, IS that step's prompt (instead of the built-in detailed one);
+        # the JSON formatting and processing around it stay the node's own.
+        detailed = caption_length == "detailed"
         tags = _parse_tags(tag_list)
         tag_rule = _tag_rule(tags, tag_mode)
         tags_suffix = ("\n\nTags: " + ", ".join(tags)) if (tags_to_prompt and tags) else ""
@@ -1090,8 +1197,8 @@ class MykeeJsonCaptioner:
                 template = template.replace("{{%s}}" % key, value)
             return template
 
-        two_calls = mode == "layout" and bool(separate_caption) and custom is None
-        use_tags = mode == "layout" and bool(tags) and custom is None
+        two_calls = mode == "layout" and ((bool(separate_caption) and custom is None) or detailed)
+        use_tags = mode == "layout" and bool(tags) and (custom is None or detailed)
         if tags and mode == "layout":
             print(f"Mykee JSON Captioner: tag list ({tag_mode}, "
                   f"{'dedicated grounding prompt' if use_tags else 'custom system_prompt'}): {tags}")
@@ -1114,7 +1221,16 @@ class MykeeJsonCaptioner:
                    sampling_mode=sampling_mode, temperature=temperature, top_k=top_k,
                    top_p=top_p, min_p=min_p, repetition_penalty=repetition_penalty,
                    presence_penalty=presence_penalty,
-                   system_text=_EXPLICIT_SYSTEM if explicit_detail else "")
+                   system_text=_EXPLICIT_SYSTEM if explicit_detail else "",
+                   template_mode=template_mode, thinking_budget=thinking_budget)
+        if custom:
+            detailed_sys = fill(custom)
+            print("Mykee JSON Captioner: caption_length 'detailed' with a custom system_prompt - "
+                  "the custom prompt is used for the detailed description.")
+        else:
+            detailed_sys = DETAILED_SYSTEM_PROMPT_EXPLICIT if explicit_detail else DETAILED_SYSTEM_PROMPT_SAFE
+        detailed_sys = detailed_sys.replace("{max_length}", str(int(max_length)))
+        detailed_gen = dict(gen, system_text=detailed_sys)
         dump = lambda v: json.dumps(v, ensure_ascii=False, indent=2 if pretty_json else None,
                                     separators=None if pretty_json else (",", ":"))
         count = image.shape[0]
@@ -1126,7 +1242,8 @@ class MykeeJsonCaptioner:
             img = _fit_image(image[i:i + 1], image_megapixels)
             seed_i = int(seed) + i
             ctx["scan"] = ""
-            if explicit_detail:
+            # detailed: the detailed prompt is self-sufficient, no scan call.
+            if explicit_detail and not detailed:
                 # Extra call first: find and name the adult content, how the
                 # bodies relate and the poses; the captions then build on it.
                 scan, scan_err, _ = self._generate_json(
@@ -1141,13 +1258,23 @@ class MykeeJsonCaptioner:
                     print("Mykee JSON Captioner: explicit scan found no adult content")
             obj, error, raw, boxes = None, None, "", []
 
+            detailed_text = None
+            if detailed:
+                detailed_text, error, raw = self._generate_json(
+                    clip, img, _detailed_user_text(reference, tags), parse_detailed_text,
+                    seed=seed_i, **detailed_gen)
+
             if mode == "layout":
                 caption_text = None
                 if two_calls:
-                    cap_obj, error, raw = self._generate_json(
-                        clip, img, caption_prompt(), parse_caption_json, seed=seed_i, **gen)
-                    if cap_obj is not None:
-                        caption_text = cap_obj["caption"][caption_length]
+                    if detailed:
+                        caption_text = detailed_text  # None (and error set) if it failed
+                    else:
+                        cap_obj, error, raw = self._generate_json(
+                            clip, img, caption_prompt(), parse_caption_json, seed=seed_i, **gen)
+                        if cap_obj is not None:
+                            caption_text = cap_obj["caption"][caption_length]
+                    if caption_text is not None:
                         prompt_text = (tag_prompt(caption_text) if use_tags
                                        else finish(fill(LAYOUT_ITEMS_PROMPT, caption=caption_text)))
                 else:
@@ -1170,7 +1297,9 @@ class MykeeJsonCaptioner:
                         clip, img, prompt_text, parse_fn, seed=seed_i + (104729 if two_calls else 0), **gen)
                 if obj is not None:
                     boxes = _layout_boxes(obj["items"], canvas_w, canvas_h)
-            else:
+            elif error is None:
+                # caption mode (with 'detailed' this call only supplies the
+                # watermark and borders; the caption itself is the detailed text)
                 obj, error, raw = self._generate_json(
                     clip, img, caption_prompt(), parse_caption_json, seed=seed_i, **gen)
                 if obj is not None:
@@ -1188,7 +1317,7 @@ class MykeeJsonCaptioner:
                 print(f"Mykee JSON Captioner: image {i + 1}/{count} OK "
                       f"({len(obj['items'])} items, canvas {canvas_w}x{canvas_h})")
             else:
-                chosen = obj["caption"][caption_length] + tags_suffix
+                chosen = (detailed_text if detailed else obj["caption"][caption_length]) + tags_suffix
                 values = [dump({"caption": chosen}), chosen,
                           json.dumps(obj["watermark"], ensure_ascii=False),
                           json.dumps(obj["borders"], ensure_ascii=False), canvas_w, canvas_h]
