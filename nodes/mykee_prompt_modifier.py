@@ -28,6 +28,15 @@ See mykee_prompt_clarity.py (Mykee Prompt Advanced) for the shared
 technical notes on the VL image-placeholder-token handling and the
 "thinking" toggle - this node uses the exact same techniques.
 
+GEMMA 4 / VIDEO / AUDIO / THINKING OUTPUT: all model-specific handling
+lives in mykee_llm_common.py. For a Gemma 4 clip the chat template, system
+prompt, thinking flag and image/video/audio tokens come from ComfyUI's own
+tokenizer (the same call the built-in "Generate Text" node makes) - for
+every model by default (template_mode "auto"); the old hand-built Qwen
+ChatML text is kept as template_mode "legacy_chatml" and as the automatic
+fallback. The thinking text is split off
+the answer and returned on its own "thinking" output.
+
 Inputs:
   clip            - any text-capable, generation-capable CLIP loader.
                     For image mode this needs to be a VL model.
@@ -83,111 +92,15 @@ Outputs:
 import json
 import re
 
+from .mykee_llm_common import (
+    empty_response_message, generate_text, generation_error_hint, media_preamble,
+    split_thinking, tokenize_for, unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+)
+
 try:
     from server import PromptServer
 except ImportError:
     PromptServer = None
-
-try:
-    import comfy.model_management as model_management
-except ImportError:
-    model_management = None
-
-
-def _unload_clip(clip):
-    """Best-effort VRAM cleanup for just this node's clip, without
-    touching any other model loaded elsewhere in the workflow. See the
-    matching helper in mykee_prompt_clarity.py for the full rationale -
-    kept as a local copy here since none of the pack's node files share
-    a common utils module."""
-    if model_management is None:
-        return
-    patcher = getattr(clip, "patcher", None)
-    if patcher is None:
-        return
-    try:
-        loaded = model_management.loaded_models()
-        if patcher in loaded:
-            loaded.remove(patcher)
-        model_management.free_memory(1e30, model_management.get_torch_device(), loaded)
-        model_management.soft_empty_cache(True)
-    except Exception:
-        pass
-    try:
-        import gc
-        import torch
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-    except Exception:
-        pass
-
-
-def _count_prompt_tokens(tokens):
-    """Best-effort count of how many tokens `tokens` (as returned by
-    clip.tokenize()) actually holds.
-
-    This matters because ComfyUI's CLIP.generate() forwards `max_length`
-    straight through to the underlying model's HF-style generate() call,
-    where max_length is - per HF's own docs - the length of the FULL
-    sequence (prompt + newly generated tokens combined), not a budget for
-    the new tokens alone. Without correcting for this, a long prompt (the
-    system prompt plus the existing 'prompt' text being edited, which can
-    easily be several hundred tokens on its own) eats directly into the
-    same budget as the actual rewritten output, so raising the max_length
-    widget mostly just buys room for the prompt that was already going to
-    be there - the completion barely grows, and the result is truncated
-    mid-sentence exactly where the combined budget runs out. Returns None
-    if the tokens structure isn't the expected
-    {encoder_name: [[(token_id, weight), ...], ...]} shape (older/newer
-    ComfyUI versions may differ), so callers can fall back to a rough
-    character-based estimate instead of silently guessing wrong.
-    """
-    try:
-        total = 0
-        for chunks in tokens.values():
-            for chunk in chunks:
-                total += len(chunk)
-        return total
-    except Exception:
-        return None
-
-
-def _think_suffix(clip, thinking):
-    """Assistant-turn suffix for Qwen3.5-family clips.
-
-    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
-    control text when it applies its own chat template, and that is skipped
-    here because this node builds the chat text itself (it starts with
-    "<|im_start|>"). Without this suffix the "thinking" toggle does nothing,
-    and an open <think> block can use up the whole token budget (it is then
-    stripped below, leaving an empty response). So add exactly what
-    ComfyUI's own template would add - for Qwen3.5 clips only; every other
-    model is left untouched.
-    """
-    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
-        if "qwen35" in type(obj).__name__.lower():
-            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
-    return ""
-
-
-def _empty_response_message(raw_output):
-    """Explain WHY the stripped response is empty."""
-    if "<think>" in raw_output and "</think>" not in raw_output:
-        return ("the model used up its max_length budget while still "
-                "thinking - raise max_length or turn thinking off")
-    return "the model returned an empty response"
-
-
-def _restore_think_open(clip, thinking, raw_output):
-    """When the prompt itself already ended with the opening "<think>\n"
-    (thinking on, see _think_suffix), the model's answer starts INSIDE the
-    block, so the decoded text has no opening tag. Put it back so the
-    <think>...</think> stripping treats the reasoning as one block (and an
-    unfinished block is recognised as one, not mistaken for the answer)."""
-    if _think_suffix(clip, thinking) == "<think>\n":
-        return "<think>\n" + raw_output
-    return raw_output
 
 
 def _toast(node_id, severity, summary, detail):
@@ -204,8 +117,6 @@ def _toast(node_id, severity, summary, detail):
         pass  # a failed notification must never break the actual node
 
 
-# The original (first-generation) text-edit system prompt, kept verbatim
-# as the 'classic' edit_method - it worked well on many models.
 TEXT_EDIT_CLASSIC_SYSTEM_PROMPT_TEMPLATE = (
     "You are a precise text editor. You will be given a piece of text "
     "called PROMPT and an EDIT INSTRUCTION. Your job is to output a "
@@ -727,11 +638,12 @@ class MykeePromptModifier:
                 }),
                 "thinking": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Let a thinking-capable model reason in a "
-                               "<think>...</think> block before answering. "
-                               "The block is stripped from edited_prompt "
-                               "either way; this only controls whether the "
-                               "model is allowed to use it at all.",
+                    "tooltip": "Let a thinking-capable model (Gemma 4, "
+                               "Qwen3.5, ...) reason before answering. The "
+                               "reasoning is never mixed into "
+                               "edited_prompt - it goes to the separate "
+                               "'thinking' output (and the thinking box on "
+                               "the node).",
                 }),
                 "unload_after_run": ("BOOLEAN", {
                     "default": False,
@@ -765,6 +677,26 @@ class MykeePromptModifier:
                                "the connected clip can't read images, a "
                                "toast will say so and the image is ignored.",
                 }),
+                "video": ("IMAGE", {
+                    "tooltip": "Optional (Gemma 4). Video frames as an image "
+                               "batch. Assumed to be 24 FPS and sub-sampled "
+                               "to 1 FPS internally, like ComfyUI's own "
+                               "Generate Text node. Works like the image "
+                               "input (a description with the edit "
+                               "instruction applied). If a video and an "
+                               "image are both connected, the video is used.",
+                }),
+                "audio": ("AUDIO", {
+                    "tooltip": "Optional (Gemma 4 variants with audio "
+                               "support, e.g. E2B/E4B). The model hears the "
+                               "audio; the result is its description with "
+                               "the edit instruction applied. Can be "
+                               "combined with image or video.",
+                }),
+                "template_mode": (TEMPLATE_MODES, {
+                    "default": "auto",
+                    "tooltip": TEMPLATE_MODE_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -775,49 +707,41 @@ class MykeePromptModifier:
     # below, which needs no backend input declaration at all (same
     # mechanism PreviewImage uses for its "images" field).
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING")
-    RETURN_NAMES = ("prompt", "edited_prompt", "analysis")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt", "edited_prompt", "analysis", "thinking")
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
     OUTPUT_NODE = True
 
     def _patch_edit(self, clip, prompt, edit_text, max_length, sampling_mode, seed, temperature,
-                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking):
-        """Patch method. Returns (edited_prompt, analysis) or None when the
-        classic rewrite should be used instead (nothing to patch, bad JSON
-        twice, or the model changed nothing)."""
+                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                    template_mode="auto"):
+        """Patch method. Returns (edited_prompt, analysis, thinking_text) or
+        None when the classic rewrite should be used instead (nothing to
+        patch, bad JSON twice, or the model changed nothing)."""
         split = _split_prompt(prompt)
         sentence_count = sum(len(p) for p in split["paragraphs"])
         if not sentence_count and not split["tags"]:
             return None
-        chat_text = (
-            "<|im_start|>system\n" + PATCH_SYSTEM_PROMPT_TEMPLATE.replace("{max_length}", str(max_length))
-            + "<|im_end|>\n"
-            f"<|im_start|>user\n{_build_patch_user_text(split, edit_text)}<|im_end|>\n"
-            "<|im_start|>assistant\n" + _think_suffix(clip, thinking)
-        )
+        sys_text = PATCH_SYSTEM_PROMPT_TEMPLATE.replace("{max_length}", str(max_length))
+        user_text = _build_patch_user_text(split, edit_text)
         try:
-            tokens = clip.tokenize(chat_text, skip_template=True, min_length=1, thinking=thinking)
+            tokens, chat_text, _notes, _kind = tokenize_for(
+                clip, lambda kind: (sys_text, user_text), thinking=thinking,
+                template_mode=template_mode)
         except Exception as e:
             print(f"Mykee Prompt Modifier: patch method - tokenization failed ({type(e).__name__}: {e})")
             return None
-        prompt_tokens = _count_prompt_tokens(tokens)
-        if prompt_tokens is None:
-            prompt_tokens = len(chat_text) // 3
-        effective_max_length = prompt_tokens + max_length
 
         for attempt in range(2):
             try:
-                ids = clip.generate(
-                    tokens, do_sample=sampling_mode, max_length=effective_max_length,
-                    temperature=temperature, top_k=top_k, top_p=top_p, min_p=min_p,
-                    repetition_penalty=repetition_penalty, presence_penalty=presence_penalty,
-                    seed=seed + attempt * 7919,
-                )
-                raw = _restore_think_open(clip, thinking, clip.decode(ids))
+                raw = generate_text(
+                    clip, tokens, chat_text, max_length, sampling_mode, seed + attempt * 7919,
+                    temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
             except Exception as e:
                 print(f"Mykee Prompt Modifier: patch method - generation failed ({type(e).__name__}: {e})")
                 return None
+            raw, thinking_text = split_thinking(raw)
             data, error = _parse_patch_json(raw, sentence_count)
             if data is None:
                 print(f"Mykee Prompt Modifier: patch attempt {attempt + 1} rejected - {error}")
@@ -829,173 +753,136 @@ class MykeePromptModifier:
             plan = data.get("analysis")
             plan = plan.strip() if isinstance(plan, str) else ""
             analysis = (plan + "\n\n" if plan else "") + "\n".join(report)
-            return text, analysis
+            return text, analysis, thinking_text
         print("Mykee Prompt Modifier: patch method failed - falling back to the rewrite method.")
         return None
 
     def run(self, clip, edit_instruction, prompt, prompt_rewrite, system_prompt, max_length,
             sampling_mode, seed, temperature, top_k, top_p, min_p, repetition_penalty,
             presence_penalty, thinking=False, unload_after_run=False, image=None,
-            edit_method="patch", node_id=None):
+            edit_method="patch", video=None, audio=None, template_mode="auto", node_id=None):
         if not prompt_rewrite:
             # Plain text-field mode: no tokenize/generate call at all, so
             # the connected clip never gets moved onto the GPU by this node.
             print("Mykee Prompt Modifier: prompt_rewrite is off - passing prompt through unchanged.")
-            return {"ui": {"response_display": [prompt]}, "result": (prompt, prompt, "")}
+            return {"ui": {"response_display": [prompt], "thinking_display": [""]},
+                    "result": (prompt, prompt, "", "")}
 
         custom_sys = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         if custom_sys and "{max_length}" in custom_sys:
             custom_sys = custom_sys.format(max_length=int(max_length))
         # NOTE: no hand-inserted <think></think> suppression - see the
-        # matching note in mykee_prompt_clarity.py. We just forward
-        # thinking=thinking to clip.tokenize() below.
+        # matching note in mykee_prompt_clarity.py. The thinking flag is
+        # forwarded to ComfyUI's own tokenizer (mykee_llm_common.py).
 
-        tokens = None
         edited_prompt = None
         analysis_text = ""
+        thinking_text = ""
         edit_text = edit_instruction.strip() if edit_instruction and edit_instruction.strip() else ""
-
-        # ---- image mode: try it first if an image is connected -----------
-        if image is not None:
-            sys_text = custom_sys or IMAGE_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
-            context_text = prompt.strip() if prompt and prompt.strip() else ""
-            if edit_text:
-                user_text = f"EDIT INSTRUCTION: {edit_text}"
-            else:
-                user_text = "EDIT INSTRUCTION: (none given - just describe the image as it is.)"
-            if context_text:
-                user_text = f"Context: {context_text}\n{user_text}"
-            # Same VL image-placeholder handling as Mykee Prompt Advanced -
-            # see the technical note at the top of mykee_prompt_clarity.py.
-            chat_text = (
-                f"<|im_start|>system\n{sys_text}<|im_end|>\n"
-                f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{user_text}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            chat_text += _think_suffix(clip, thinking)
-            try:
-                tokens = clip.tokenize(chat_text, image=image, skip_template=True, min_length=1, thinking=thinking)
-            except TypeError:
-                _toast(
-                    node_id, "warn", "Mykee Prompt Modifier",
-                    "The connected clip doesn't support image input (not a "
-                    "VL model) - the image was ignored.",
-                )
-                tokens = None
-            except Exception as e:
-                edited_prompt = f"[image tokenization failed: {type(e).__name__}: {e}]"
+        has_media = (image is not None) or (video is not None) or (audio is not None)
 
         # ---- text-only mode, patch method ------------------------------
-        if (tokens is None and edited_prompt is None and edit_method == "patch"
+        if (not has_media and edit_method == "patch"
                 and not custom_sys and edit_text and prompt and prompt.strip()):
             patched = self._patch_edit(
                 clip, prompt, edit_text, int(max_length), bool(sampling_mode), int(seed),
                 float(temperature), int(top_k), float(top_p), float(min_p),
-                float(repetition_penalty), float(presence_penalty), thinking)
+                float(repetition_penalty), float(presence_penalty), thinking, template_mode)
             if patched is not None:
-                edited_prompt, analysis_text = patched
+                edited_prompt, analysis_text, thinking_text = patched
 
-        # ---- text-only mode: no image, or image mode above didn't run ----
-        if tokens is None and edited_prompt is None:
+        # ---- image / video / audio mode, or text-only rewrite ----------
+        used_kind = None
+        if edited_prompt is None:
             text_template = (TEXT_EDIT_CLASSIC_SYSTEM_PROMPT_TEMPLATE if edit_method == "classic"
                              else TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE)
-            sys_text = custom_sys or text_template.format(max_length=int(max_length))
-            user_text = (
-                f"PROMPT:\n{prompt}\n\n"
-                f"EDIT INSTRUCTION:\n"
-                f"{edit_text if edit_text else '(none given - return PROMPT unchanged.)'}"
-            )
-            chat_text = (
-                f"<|im_start|>system\n{sys_text}<|im_end|>\n"
-                f"<|im_start|>user\n{user_text}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            chat_text += _think_suffix(clip, thinking)
+
+            def make_prompts(kind):
+                if kind is None:
+                    sys_text = custom_sys or text_template.format(max_length=int(max_length))
+                    user_text = (
+                        f"PROMPT:\n{prompt}\n\n"
+                        f"EDIT INSTRUCTION:\n"
+                        f"{edit_text if edit_text else '(none given - return PROMPT unchanged.)'}"
+                    )
+                    return sys_text, user_text
+                sys_text = custom_sys or (
+                    media_preamble(image, video, audio)
+                    + IMAGE_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length)))
+                context_text = prompt.strip() if prompt and prompt.strip() else ""
+                if edit_text:
+                    user_text = f"EDIT INSTRUCTION: {edit_text}"
+                else:
+                    user_text = f"EDIT INSTRUCTION: (none given - just describe the {kind} as it is.)"
+                if context_text:
+                    user_text = f"Context: {context_text}\n{user_text}"
+                return sys_text, user_text
+
+            tokens = chat_text = None
             try:
-                # this text also starts with "<|im_start|>", so it's used
-                # verbatim - see the comment in the image branch above.
-                tokens = clip.tokenize(chat_text, skip_template=True, min_length=1, thinking=thinking)
+                tokens, chat_text, notes, used_kind = tokenize_for(
+                    clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
+                    template_mode=template_mode)
+                for note in notes:
+                    _toast(node_id, "warn", "Mykee Prompt Modifier", note)
             except Exception as e:
                 edited_prompt = f"[tokenization failed: {type(e).__name__}: {e}]"
 
-        # ---- generation -----------------------------------------------
-        if edited_prompt is None:
-            # max_length here is a TOTAL sequence budget for clip.generate()
-            # (prompt + completion), not a completion-only budget - see
-            # _count_prompt_tokens() above. Inflate it by however many
-            # tokens the prompt itself just used, so the `max_length`
-            # widget keeps meaning what it visually promises: room for the
-            # generated response, on top of however long the prompt is.
-            prompt_token_count = _count_prompt_tokens(tokens)
-            if prompt_token_count is None:
-                # Structure wasn't recognized - fall back to a generous
-                # ~3 chars/token estimate from the actual chat text sent in,
-                # rather than risk under-shooting and truncating again.
-                prompt_token_count = len(chat_text) // 3
-            effective_max_length = prompt_token_count + int(max_length)
-            try:
-                generated_ids = clip.generate(
-                    tokens,
-                    do_sample=bool(sampling_mode),
-                    max_length=effective_max_length,
-                    temperature=float(temperature),
-                    top_k=int(top_k),
-                    top_p=float(top_p),
-                    min_p=float(min_p),
-                    repetition_penalty=float(repetition_penalty),
-                    presence_penalty=float(presence_penalty),
-                    seed=int(seed),
-                )
-                edited_prompt = _restore_think_open(clip, thinking, clip.decode(generated_ids))
-                # safety net in case a thinking-capable model still emits a
-                # <think> block despite no thinking request
-                raw_output = edited_prompt
-                edited_prompt = re.sub(r"<think>.*?(?:</think>|$)", "", edited_prompt, flags=re.DOTALL).strip()
-                # Strip the required ANALYSIS line: the default system
-                # prompts force the model to visibly plan the edit before
-                # writing it out (native "thinking" isn't reliable on every
-                # model - e.g. Qwen3-VL 4B has no thinking mode at all), so
-                # only the text after the last "===FINAL===" marker is the
-                # actual result. Falls back to the full response if no
-                # marker is found (e.g. a custom system_prompt override
-                # that doesn't use this format).
-                extracted = _extract_final(edited_prompt)
-                if extracted is not None:
-                    analysis_text = _extract_analysis(edited_prompt)
-                    edited_prompt = extracted
-                elif edited_prompt.lstrip().upper().startswith("ANALYSIS"):
-                    # the model never reached the result part (it ran out
-                    # of max_length while still planning) - the plan is not
-                    # a usable result
-                    print("Mykee Prompt Modifier: the response starts with "
-                          "ANALYSIS but has no '===FINAL===' marker.")
-                    analysis_text = edited_prompt
-                    edited_prompt = ("[the model used up its max_length "
-                                     "while still writing the ANALYSIS and "
-                                     "never reached the result - raise "
-                                     "max_length or turn thinking off]")
-                else:
-                    print("Mykee Prompt Modifier: no '===FINAL===' marker "
-                          "found in the model's response - using the full "
-                          "response as-is.")
-                if not edited_prompt:
-                    edited_prompt = f"[{_empty_response_message(raw_output)}]"
-            except Exception as e:
-                edited_prompt = (
-                    f"[generation failed: {type(e).__name__}: {e}]\n"
-                    "Make sure 'clip' here is a generation-capable chat "
-                    "model, not an encoder with no LM head wired up for "
-                    "generation in ComfyUI (e.g. Krea2's own Qwen3-VL "
-                    "conditioning encoder)."
-                )
+            # ---- generation -------------------------------------------
+            if edited_prompt is None:
+                try:
+                    raw_output = generate_text(
+                        clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
+                        top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                    # the thinking block never stays in the result; it is
+                    # returned separately
+                    edited_prompt, thinking_text = split_thinking(raw_output)
+                    # Strip the required ANALYSIS line: the default system
+                    # prompts force the model to visibly plan the edit before
+                    # writing it out (native "thinking" isn't reliable on every
+                    # model - e.g. Qwen3-VL 4B has no thinking mode at all), so
+                    # only the text after the last "===FINAL===" marker is the
+                    # actual result. Falls back to the full response if no
+                    # marker is found (e.g. a custom system_prompt override
+                    # that doesn't use this format).
+                    extracted = _extract_final(edited_prompt)
+                    if extracted is not None:
+                        analysis_text = _extract_analysis(edited_prompt)
+                        edited_prompt = extracted
+                    elif edited_prompt.lstrip().upper().startswith("ANALYSIS"):
+                        # the model never reached the result part (it ran out
+                        # of max_length while still planning) - the plan is not
+                        # a usable result
+                        print("Mykee Prompt Modifier: the response starts with "
+                              "ANALYSIS but has no '===FINAL===' marker.")
+                        analysis_text = edited_prompt
+                        edited_prompt = ("[the model used up its max_length "
+                                         "while still writing the ANALYSIS and "
+                                         "never reached the result - raise "
+                                         "max_length or turn thinking off]")
+                    else:
+                        print("Mykee Prompt Modifier: no '===FINAL===' marker "
+                              "found in the model's response - using the full "
+                              "response as-is.")
+                    if not edited_prompt:
+                        edited_prompt = f"[{empty_response_message(raw_output)}]"
+                except Exception as e:
+                    edited_prompt = (
+                        f"[generation failed: {type(e).__name__}: {e}]\n"
+                        + generation_error_hint(used_kind is not None)
+                    )
 
         print("=" * 70)
         print("Mykee Prompt Modifier")
         print("=" * 70)
         print(f"Prompt: {prompt!r}")
         print(f"Edit instruction: {edit_text!r}")
-        print(f"Image connected: {image is not None}")
+        print(f"Media sent: {used_kind or 'none (text-only)'}")
         print("")
+        if thinking_text:
+            print("--- thinking ---")
+            print(thinking_text)
+            print("--- result ---")
         print(edited_prompt)
         if analysis_text:
             print("")
@@ -1005,7 +892,8 @@ class MykeePromptModifier:
         if unload_after_run:
             _unload_clip(clip)
 
-        return {"ui": {"response_display": [edited_prompt]}, "result": (prompt, edited_prompt, analysis_text)}
+        return {"ui": {"response_display": [edited_prompt], "thinking_display": [thinking_text]},
+                "result": (prompt, edited_prompt, analysis_text, thinking_text)}
 
 
 NODE_CLASS_MAPPINGS = {

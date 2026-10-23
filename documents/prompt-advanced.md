@@ -58,14 +58,15 @@ for this node instead (see
 - **seed, temperature, top_k, top_p, min_p, repetition_penalty,
   presence_penalty** - the usual sampling controls, with the same
   defaults/ranges as ComfyUI's own "Generate Text" node.
-- **thinking** - lets a thinking-capable model reason in a
-  `<think>...</think>` block first, if the model/tokenizer supports it.
-  The block is always stripped from the output.
+- **thinking** - lets a thinking-capable model (Gemma 4, Qwen3.5, ...)
+  reason first. The reasoning is never mixed into `reason_text`; it goes to
+  the **thinking** output.
 - **unload_after_run** - frees this clip from VRAM right after generating,
   without touching any other model loaded in the workflow (e.g. your
   diffusion model). It is reloaded automatically next time. Useful for
   large chat models you only need briefly.
 - **image** (optional) - switches the node into image-description mode.
+- **video**, **audio** (optional, Gemma 4) - see below.
 
 ## Outputs
 
@@ -73,6 +74,43 @@ for this node instead (see
   before a text encoder without breaking the chain.
 - **reason_text** - the model's response. It is also shown in a read-only
   text box at the bottom of the node after each run.
+- **thinking** - the model's reasoning text (empty if there was none), also
+  shown in its own read-only box.
+
+## Gemma 4, video and audio
+
+The node detects a **Gemma 4** clip and then lets ComfyUI's own Gemma 4
+tokenizer build the whole chat template - system prompt, the `thinking`
+flag and the image / video / audio tokens - exactly like ComfyUI's built-in
+"Generate Text" node does. (Earlier versions always hand-built a Qwen-style
+`<|im_start|>` chat for every model; Gemma 4 cannot read that, so it never
+saw the image and answered with nonsense.) Every other model now goes the
+same way by default, see **template_mode** below.
+
+- **template_mode** (optional) - `auto` (default): ComfyUI's own tokenizer
+  builds the model's chat template, so the node follows whatever templates
+  ComfyUI knows (Gemma 4, Qwen3-VL, Qwen3.5, ...); if that fails for the
+  connected clip, the node falls back to the old Qwen ChatML text.
+  `native`: ComfyUI's template only, errors are shown. `legacy_chatml`: the
+  old hand-built Qwen-style `<|im_start|>` text (image only) - use it if a
+  model misbehaves with the native template. Gemma 4 always uses the native
+  template.
+
+- **video** (optional, Gemma 4) - video frames as an IMAGE batch. Assumed to
+  be 24 FPS and sub-sampled to 1 FPS internally, like the built-in node.
+  If both a video and an image are connected, the video is used.
+- **audio** (optional, Gemma 4 variants with audio support, e.g. E2B/E4B) -
+  the model hears the audio. Audio alone gets its own default prompt
+  (speech quoted verbatim, music, sounds); together with an image / video
+  the description gets an extra "what is heard" part. Very long audio may be
+  cut off by the model.
+- Media the connected clip cannot take (video/audio on a Qwen clip, image
+  on a non-VL clip) is ignored with a toast, and the node falls back to
+  text-only.
+- **thinking** - with the `thinking` toggle on, the model's reasoning goes
+  to the separate **thinking** output (and its own text box on the node)
+  instead of being thrown away. It is filled in whenever the model produced
+  a thinking block.
 
 ## Credits
 

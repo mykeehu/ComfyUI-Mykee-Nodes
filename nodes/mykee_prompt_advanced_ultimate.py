@@ -41,6 +41,15 @@ Stage 2 (text-only, always - never re-examines the image):
     based strictly on that text - a pure text-comprehension task with
     no image involved, so there's no VQA-style bias to fall back on.
 
+GEMMA 4 / VIDEO / AUDIO / THINKING OUTPUT: all model-specific handling
+lives in mykee_llm_common.py. For a Gemma 4 clip the chat template, system
+prompt, thinking flag and image/video/audio tokens come from ComfyUI's own
+tokenizer (the same call the built-in "Generate Text" node makes) - for
+every model by default (template_mode "auto"); the old hand-built Qwen
+ChatML text is kept as template_mode "legacy_chatml" and as the automatic
+fallback. The thinking text is split off
+the answer and returned on its own "thinking" output.
+
 Both stages share the same 'clip' (loaded once). Each stage has its
 own independent seed/sampling/max_length/thinking controls, since a
 longer, varied stage-1 description and a short, deterministic stage-2
@@ -146,98 +155,16 @@ Outputs:
 import re
 import random
 
+from .mykee_llm_common import (
+    AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
+    generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
+    unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+)
+
 try:
     from server import PromptServer
 except ImportError:
     PromptServer = None
-
-try:
-    import comfy.model_management as model_management
-except ImportError:
-    model_management = None
-
-
-def _unload_clip(clip):
-    """Best-effort VRAM cleanup for just this node's clip, without
-    touching any other model loaded elsewhere in the workflow. See the
-    matching helper in mykee_prompt_clarity.py for the full rationale -
-    kept as a local copy here since none of the pack's node files share
-    a common utils module."""
-    if model_management is None:
-        return
-    patcher = getattr(clip, "patcher", None)
-    if patcher is None:
-        return
-    try:
-        loaded = model_management.loaded_models()
-        if patcher in loaded:
-            loaded.remove(patcher)
-        model_management.free_memory(1e30, model_management.get_torch_device(), loaded)
-        model_management.soft_empty_cache(True)
-    except Exception:
-        pass
-    try:
-        import gc
-        import torch
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-    except Exception:
-        pass
-
-
-def _count_prompt_tokens(tokens):
-    """Best-effort count of how many tokens `tokens` (as returned by
-    clip.tokenize()) actually holds - see the matching helper in
-    mykee_prompt_modifier.py for the full rationale (ComfyUI's
-    CLIP.generate() treats max_length as a TOTAL prompt+completion budget,
-    not a completion-only one). Returns None if the tokens structure isn't
-    the expected {encoder_name: [[(token_id, weight), ...], ...]} shape."""
-    try:
-        total = 0
-        for chunks in tokens.values():
-            for chunk in chunks:
-                total += len(chunk)
-        return total
-    except Exception:
-        return None
-
-
-def _think_suffix(clip, thinking):
-    """Assistant-turn suffix for Qwen3.5-family clips.
-
-    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
-    control text when it applies its own chat template, and that is skipped
-    here because this node builds the chat text itself (it starts with
-    "<|im_start|>"). Without this suffix the "thinking" toggle does nothing,
-    and an open <think> block can use up the whole token budget (it is then
-    stripped below, leaving an empty response). So add exactly what
-    ComfyUI's own template would add - for Qwen3.5 clips only; every other
-    model is left untouched.
-    """
-    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
-        if "qwen35" in type(obj).__name__.lower():
-            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
-    return ""
-
-
-def _empty_response_message(raw_output):
-    """Explain WHY the stripped response is empty."""
-    if "<think>" in raw_output and "</think>" not in raw_output:
-        return ("the model used up its max_length budget while still "
-                "thinking - raise max_length or turn thinking off")
-    return "the model returned an empty response"
-
-
-def _restore_think_open(clip, thinking, raw_output):
-    """When the prompt itself already ended with the opening "<think>\n"
-    (thinking on, see _think_suffix), the model's answer starts INSIDE the
-    block, so the decoded text has no opening tag. Put it back so the
-    <think>...</think> stripping treats the reasoning as one block (and an
-    unfinished block is recognised as one, not mistaken for the answer)."""
-    if _think_suffix(clip, thinking) == "<think>\n":
-        return "<think>\n" + raw_output
-    return raw_output
 
 
 def _toast(node_id, severity, summary, detail):
@@ -548,10 +475,12 @@ def _sampling_widgets(prefix="", include_seed_control=False):
         }),
         f"{prefix}thinking": ("BOOLEAN", {
             "default": False,
-            "tooltip": "Let a thinking-capable model reason in a "
-                       "<think>...</think> block before answering, IF the "
-                       "loaded model/tokenizer supports it. Always "
-                       "stripped from this stage's output either way.",
+            "tooltip": "Let a thinking-capable model (Gemma 4, Qwen3.5, "
+                       "...) reason before answering, IF the loaded "
+                       "model/tokenizer supports it. The reasoning never "
+                       "ends up in this stage's response - it goes to the "
+                       "stage's own thinking output (thinking_1 / "
+                       "thinking_2) and thinking box.",
         }),
     })
     return widgets
@@ -667,6 +596,24 @@ class MykeePromptAdvancedUltimate:
                                "image-description mode. Stage 2 never "
                                "sees the image directly.",
                 }),
+                "video": ("IMAGE", {
+                    "tooltip": "Optional (Gemma 4). Video frames as an image "
+                               "batch. Assumed to be 24 FPS and sub-sampled "
+                               "to 1 FPS internally, like ComfyUI's own "
+                               "Generate Text node. Stage 1 describes it; "
+                               "stage 2 never sees it. If a video and an "
+                               "image are both connected, the video is used.",
+                }),
+                "audio": ("AUDIO", {
+                    "tooltip": "Optional (Gemma 4 variants with audio "
+                               "support, e.g. E2B/E4B). Stage 1 hears it "
+                               "and describes it (alone or together with "
+                               "the image/video); stage 2 never hears it.",
+                }),
+                "template_mode": (TEMPLATE_MODES, {
+                    "default": "auto",
+                    "tooltip": TEMPLATE_MODE_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -676,77 +623,43 @@ class MykeePromptAdvancedUltimate:
     # web/mykee_prompt_advanced_ultimate.js and filled in only through the
     # {"ui": {...}} channel below.
 
-    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING")
-    RETURN_NAMES = ("prompt_1", "prompt_2", "response_1", "response_2", "tags_1")
+    RETURN_TYPES = ("STRING", "STRING", "STRING", "STRING", "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt_1", "prompt_2", "response_1", "response_2", "tags_1", "thinking_1", "thinking_2")
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
     OUTPUT_NODE = True
 
-    def _generate_stage(self, clip, chat_text, image, max_length, sampling_mode,
+    def _generate_stage(self, clip, make_prompts, image, video, audio, max_length, sampling_mode,
                          seed, temperature, top_k, top_p, min_p,
                          repetition_penalty, presence_penalty, thinking,
-                         tokenize_kwargs, stage_label, node_id):
-        """Shared tokenize+generate+decode call for one stage. Returns the
-        decoded, <think>-stripped text (or a bracketed [...] error string
-        on failure, matching the other Prompt Advanced nodes' convention)."""
-        chat_text = chat_text + _think_suffix(clip, thinking)
+                         stage_label, node_id, template_mode="auto"):
+        """Shared tokenize+generate+decode call for one stage. Returns
+        (answer, thinking_text, media_kind_used). The answer is the
+        decoded text with the thinking block split off (or a bracketed [...]
+        error string on failure, matching the other Prompt Advanced nodes'
+        convention)."""
         try:
-            tokens = clip.tokenize(chat_text, **tokenize_kwargs)
-        except TypeError:
-            if "image" in tokenize_kwargs:
-                _toast(
-                    node_id, "warn", "Mykee Prompt Advanced Ultimate",
-                    f"{stage_label}: the connected clip doesn't support "
-                    "image input (not a VL model) - the image was ignored.",
-                )
-                tokenize_kwargs = dict(tokenize_kwargs)
-                tokenize_kwargs.pop("image", None)
-                try:
-                    tokens = clip.tokenize(chat_text, **tokenize_kwargs)
-                except Exception as e:
-                    return f"[{stage_label}: tokenization failed: {type(e).__name__}: {e}]"
-            else:
-                return f"[{stage_label}: tokenization failed]"
+            tokens, chat_text, notes, used_kind = tokenize_for(
+                clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
+                template_mode=template_mode)
         except Exception as e:
-            return f"[{stage_label}: tokenization failed: {type(e).__name__}: {e}]"
-
-        # max_length here is a TOTAL sequence budget for clip.generate()
-        # (prompt + completion), not a completion-only budget - see
-        # _count_prompt_tokens() above. Inflate it by however many tokens
-        # the prompt itself (chat_text, this stage's system+user turns)
-        # just used, so the max_length widget keeps meaning what it
-        # visually promises: room for the generated response, on top of
-        # however long the prompt is.
-        prompt_token_count = _count_prompt_tokens(tokens)
-        if prompt_token_count is None:
-            prompt_token_count = len(chat_text) // 3
-        effective_max_length = prompt_token_count + int(max_length)
+            return f"[{stage_label}: tokenization failed: {type(e).__name__}: {e}]", "", None
+        for note in notes:
+            _toast(node_id, "warn", "Mykee Prompt Advanced Ultimate", f"{stage_label}: {note}")
 
         try:
-            generated_ids = clip.generate(
-                tokens,
-                do_sample=bool(sampling_mode),
-                max_length=effective_max_length,
-                temperature=float(temperature),
-                top_k=int(top_k),
-                top_p=float(top_p),
-                min_p=float(min_p),
-                repetition_penalty=float(repetition_penalty),
-                presence_penalty=float(presence_penalty),
-                seed=int(seed),
-            )
-            text = _restore_think_open(clip, thinking, clip.decode(generated_ids))
-            raw_output = text
-            text = re.sub(r"<think>.*?(?:</think>|$)", "", text, flags=re.DOTALL).strip()
+            raw_output = generate_text(
+                clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
+                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+            text, thinking_text = split_thinking(raw_output)
             if not text:
-                text = f"[{stage_label}: {_empty_response_message(raw_output)}]"
-            return text
+                text = f"[{stage_label}: {empty_response_message(raw_output)}]"
+            return text, thinking_text, used_kind
         except Exception as e:
             return (
                 f"[{stage_label}: generation failed: {type(e).__name__}: {e}]\n"
-                "Make sure 'clip' here is a generation-capable chat model, "
-                "not an encoder with no LM head wired up for generation in "
-                "ComfyUI (e.g. Krea2's own Qwen3-VL conditioning encoder)."
+                + generation_error_hint(used_kind is not None),
+                "", used_kind,
             )
 
     def run(self, clip, prompt, prompt_rewrite, system_prompt, generate_tags, max_tags,
@@ -756,7 +669,8 @@ class MykeePromptAdvancedUltimate:
             second_max_length, second_sampling_mode, second_seed, second_seed_control,
             second_temperature, second_top_k, second_top_p, second_min_p,
             second_repetition_penalty, second_presence_penalty, second_thinking,
-            unload_after_run=False, image=None, node_id=None):
+            unload_after_run=False, image=None, video=None, audio=None,
+            template_mode="auto", node_id=None):
 
         second_prompt_text = second_prompt.strip() if second_prompt and second_prompt.strip() else ""
 
@@ -772,8 +686,10 @@ class MykeePromptAdvancedUltimate:
                     "response_1_display": [response_1],
                     "response_2_display": [response_2],
                     "tags_1_display": [tags_1],
+                    "thinking_1_display": [""],
+                    "thinking_2_display": [""],
                 },
-                "result": (prompt, second_prompt, response_1, response_2, tags_1),
+                "result": (prompt, second_prompt, response_1, response_2, tags_1, "", ""),
             }
 
         # ---- stage 1 ---------------------------------------------------
@@ -781,40 +697,31 @@ class MykeePromptAdvancedUltimate:
         if custom_sys_1 and "{max_length}" in custom_sys_1:
             custom_sys_1 = custom_sys_1.format(max_length=int(max_length))
 
-        response_1 = None
-        if image is not None:
-            sys_text_1 = custom_sys_1 or STAGE1_IMAGE_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+        def make_prompts_1(kind):
+            if kind is None:
+                sys_text = custom_sys_1 or STAGE1_TEXT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+                user_text = prompt
+            else:
+                if custom_sys_1:
+                    sys_text = custom_sys_1
+                elif kind == "audio":
+                    sys_text = AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+                else:
+                    sys_text = (media_preamble(image, video, audio)
+                                + STAGE1_IMAGE_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length)))
+                user_text = prompt.strip() if prompt and prompt.strip() else DEFAULT_USER_TEXT[kind]
             if generate_tags:
-                sys_text_1 = sys_text_1 + TAG_LIST_ADDENDUM_TEMPLATE
-            user_text_1 = prompt.strip() if prompt and prompt.strip() else "Describe this image in full detail."
-            chat_text_1 = (
-                f"<|im_start|>system\n{sys_text_1}<|im_end|>\n"
-                f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{user_text_1}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            response_1 = self._generate_stage(
-                clip, chat_text_1, image, max_length, sampling_mode, seed, temperature,
-                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
-                {"image": image, "skip_template": True, "min_length": 1, "thinking": thinking},
-                "Stage 1", node_id,
-            )
-        else:
-            sys_text_1 = custom_sys_1 or STAGE1_TEXT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
-            if generate_tags:
-                sys_text_1 = sys_text_1 + TAG_LIST_ADDENDUM_TEMPLATE
-            chat_text_1 = (
-                f"<|im_start|>system\n{sys_text_1}<|im_end|>\n"
-                f"<|im_start|>user\n{prompt}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            response_1 = self._generate_stage(
-                clip, chat_text_1, None, max_length, sampling_mode, seed, temperature,
-                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
-                {"skip_template": True, "min_length": 1, "thinking": thinking},
-                "Stage 1", node_id,
-            )
+                sys_text = sys_text + TAG_LIST_ADDENDUM_TEMPLATE
+            return sys_text, user_text
+
+        response_1, thinking_1, used_kind_1 = self._generate_stage(
+            clip, make_prompts_1, image, video, audio, max_length, sampling_mode, seed, temperature,
+            top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+            "Stage 1", node_id, template_mode,
+        )
 
         # ---- stage 2 (text-only; only runs if enabled and non-empty) ---
+        thinking_2 = ""
         run_stage_2 = bool(second_stage_enabled) and bool(second_prompt_text)
         if run_stage_2:
             custom_sys_2 = second_system_prompt.strip() if second_system_prompt and second_system_prompt.strip() else None
@@ -828,17 +735,12 @@ class MykeePromptAdvancedUltimate:
                 sys_text_2 = custom_sys_2 or STAGE2_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(second_max_length))
                 user_text_2 = f"RESPONSE 1:\n{response_1}\n\n{second_prompt_text}"
 
-            chat_text_2 = (
-                f"<|im_start|>system\n{sys_text_2}<|im_end|>\n"
-                f"<|im_start|>user\n{user_text_2}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            response_2 = self._generate_stage(
-                clip, chat_text_2, None, second_max_length, second_sampling_mode, second_seed,
+            response_2, thinking_2, _ = self._generate_stage(
+                clip, lambda kind: (sys_text_2, user_text_2), None, None, None,
+                second_max_length, second_sampling_mode, second_seed,
                 second_temperature, second_top_k, second_top_p, second_min_p,
                 second_repetition_penalty, second_presence_penalty, second_thinking,
-                {"skip_template": True, "min_length": 1, "thinking": second_thinking},
-                "Stage 2", node_id,
+                "Stage 2", node_id, template_mode,
             )
             # edit mode's default system prompt (and any custom one using
             # the same convention) forces the model to write an ANALYSIS
@@ -878,17 +780,23 @@ class MykeePromptAdvancedUltimate:
         print("Mykee Prompt Advanced Ultimate")
         print("=" * 70)
         print(f"Prompt (stage 1): {prompt!r}")
-        print(f"Image connected: {image is not None}")
+        print(f"Media sent to stage 1: {used_kind_1 or 'none (text-only)'}")
         print(f"Second stage: {'ran' if run_stage_2 else 'skipped'}")
         if second_prompt_text:
             print(f"Second prompt: {second_prompt_text!r}")
         print("")
+        if thinking_1:
+            print("--- thinking_1 ---")
+            print(thinking_1)
         print("--- response_1 ---")
         print(response_1)
         if generate_tags:
             print("--- tags_1 ---")
             print(tags_1 or "(no '===TAGS===' marker found in response_1)")
         if run_stage_2:
+            if thinking_2:
+                print("--- thinking_2 ---")
+                print(thinking_2)
             print("--- response_2 ---")
             print(response_2)
 
@@ -900,9 +808,11 @@ class MykeePromptAdvancedUltimate:
                 "response_1_display": [response_1],
                 "response_2_display": [response_2],
                 "tags_1_display": [tags_1],
+                "thinking_1_display": [thinking_1],
+                "thinking_2_display": [thinking_2],
                 "second_seed": [next_second_seed],
             },
-            "result": (prompt, second_prompt, response_1, response_2, tags_1),
+            "result": (prompt, second_prompt, response_1, response_2, tags_1, thinking_1, thinking_2),
         }
 
 

@@ -61,6 +61,9 @@ sense with it off is fixed too, not left dangling.
   rewritten, the tag list is always returned). `classic` is the original
   first-version system prompt, kept verbatim, also a whole-text rewrite.
 - **image** (optional) - switches the node into image-edit mode.
+- **video**, **audio** (optional, Gemma 4) - same idea as the image: the
+  model's description of the video / audio with the edit applied. See
+  [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio).
 
 ## Outputs
 
@@ -75,3 +78,6 @@ sense with it off is fixed too, not left dangling.
   With `patch`, the analysis also lists every applied change (rewritten /
   removed / added sentences, removed / added tags, ignored tags that were
   not in the list, and how many sentences and tags were kept).
+- **thinking** - the model's reasoning text when `thinking` is on (empty
+  otherwise), also shown in its own read-only box. The reasoning never ends
+  up in `edited_prompt`.

@@ -66,8 +66,10 @@ the marker, `tags_1` stays empty.)
 
 ## Inputs
 
-- **clip, image** - as in Mykee Prompt Advanced. The image is used by
-  stage 1 only.
+- **clip, image, video, audio** - as in Mykee Prompt Advanced (Gemma 4 gets
+  its native chat template, video and audio; see
+  [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio)). The
+  media is used by stage 1 only.
 - **prompt** - stage 1's user turn (a question/focus/context in image mode;
   the text to paraphrase in text-only mode).
 - **prompt_rewrite** - master switch. OFF: no model calls for either
@@ -99,8 +101,11 @@ the marker, `tags_1` stays empty.)
   was skipped.
 - **tags_1** - only the tag list from `response_1`. Empty if
   `generate_tags` is off.
+- **thinking_1**, **thinking_2** - the reasoning of stage 1 / stage 2 when
+  their `thinking` toggle is on (empty otherwise). The reasoning never ends
+  up in the responses.
 
-`response_1`, `response_2` and `tags_1` are also shown in read-only text
+`response_1`, `response_2`, `tags_1`, `thinking_1` and `thinking_2` are also shown in read-only text
 boxes at the bottom of the node after each run, so you can check them
 without wiring the outputs anywhere. Editing those boxes has no effect -
 they are overwritten on the next run.

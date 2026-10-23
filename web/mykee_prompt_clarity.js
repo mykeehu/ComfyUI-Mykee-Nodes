@@ -3,6 +3,16 @@ import { ComfyWidgets } from "../../scripts/widgets.js";
 
 const NODE_NAME = "MykeePromptAdvanced";
 const DISPLAY_NAME = "response_display";
+const THINKING_NAME = "thinking_display";
+const DISPLAY_WIDGET_NAMES = [DISPLAY_NAME, THINKING_NAME];
+const COPY_LABELS = {
+    [DISPLAY_NAME]: "📋 Copy text",
+    [THINKING_NAME]: "📋 Copy thinking",
+};
+const PLACEHOLDERS = {
+    [DISPLAY_NAME]: "(filled in after running)",
+    [THINKING_NAME]: "(thinking text - filled in after running with thinking on)",
+};
 
 
 // The display widgets are client-side only (serialize = false, so they never
@@ -141,16 +151,18 @@ app.registerExtension({
             // declared backend input at all (a plain w.serialize = false
             // on a real input wasn't reliable enough on its own to stop
             // this node rerunning on every queue).
-            const { widget: w } = ComfyWidgets["STRING"](
-                this, DISPLAY_NAME, ["STRING", { multiline: true, default: "" }], app
-            );
-            w.serialize = false;
-            if (w.inputEl) {
-                w.inputEl.readOnly = true;
-                w.inputEl.placeholder = "(filled in after running)";
-                w.inputEl.style.opacity = "0.75";
+            for (const name of DISPLAY_WIDGET_NAMES) {
+                const { widget: w } = ComfyWidgets["STRING"](
+                    this, name, ["STRING", { multiline: true, default: "" }], app
+                );
+                w.serialize = false;
+                if (w.inputEl) {
+                    w.inputEl.readOnly = true;
+                    w.inputEl.placeholder = PLACEHOLDERS[name];
+                    w.inputEl.style.opacity = "0.75";
+                }
+                addCopyButton(this, name, COPY_LABELS[name]);
             }
-            addCopyButton(this, DISPLAY_NAME, "📋 Copy text");
 
             return ret;
         };
@@ -159,18 +171,19 @@ app.registerExtension({
         nodeType.prototype.onConfigure = function () {
             const ret = onConfigure ? onConfigure.apply(this, arguments) : undefined;
             // properties are restored by now; the widgets exist since onNodeCreated.
-            restoreDisplay(this, [DISPLAY_NAME]);
+            restoreDisplay(this, DISPLAY_WIDGET_NAMES);
             return ret;
         };
 
         const onExecuted = nodeType.prototype.onExecuted;
         nodeType.prototype.onExecuted = function (message) {
             onExecuted?.apply(this, arguments);
-            const value = message?.[DISPLAY_NAME]?.[0];
-            if (value === undefined) return;
-            rememberDisplay(this, DISPLAY_NAME, value);
-            const w = this.widgets?.find((w) => w.name === DISPLAY_NAME);
-            if (w) {
+            for (const name of DISPLAY_WIDGET_NAMES) {
+                const value = message?.[name]?.[0];
+                if (value === undefined) continue;
+                rememberDisplay(this, name, value);
+                const w = this.widgets?.find((w) => w.name === name);
+                if (!w) continue;
                 w.value = value;
                 if (w.inputEl) {
                     w.inputEl.value = value;

@@ -21,6 +21,15 @@ as night even if the image looks like day). If no clip capable of
 reading images is connected, a ComfyUI toast notification says so and
 the image is ignored (the node still runs in text-only mode).
 
+GEMMA 4 / VIDEO / AUDIO / THINKING OUTPUT: all model-specific handling
+lives in mykee_llm_common.py. For a Gemma 4 clip the chat template, system
+prompt, thinking flag and image/video/audio tokens come from ComfyUI's own
+tokenizer (the same call the built-in "Generate Text" node makes) - for
+every model by default (template_mode "auto"); the old hand-built Qwen
+ChatML text is kept as template_mode "legacy_chatml" and as the automatic
+fallback. The thinking text is split off
+the answer and returned on its own "thinking" output.
+
 Not usable with an encoder that has no LM head wired up for
 generation in ComfyUI at all - e.g. Krea2's own Qwen3-VL conditioning
 encoder (see https://github.com/Comfy-Org/ComfyUI/issues/14388). Load
@@ -97,109 +106,16 @@ Outputs:
 
 import re
 
+from .mykee_llm_common import (
+    AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
+    generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
+    unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
+)
+
 try:
     from server import PromptServer
 except ImportError:
     PromptServer = None
-
-try:
-    import comfy.model_management as model_management
-except ImportError:
-    model_management = None
-
-
-def _unload_clip(clip):
-    """Best-effort VRAM cleanup for just this node's clip, without
-    touching any other model loaded elsewhere in the workflow (e.g. the
-    diffusion model).
-
-    NOTE: an earlier version of this used
-    comfy.model_management.unload_model_clones()/unload_model_and_clones()
-    - those exist for OTHER internal purposes (resolving clone conflicts
-    at load time) and, confirmed by testing, don't actually free VRAM
-    when called like this. The technique below instead matches the
-    community SeanScripts/ComfyUI-Unload-Model node
-    (https://github.com/SeanScripts/ComfyUI-Unload-Model): ask
-    free_memory() to free an unsatisfiably large amount while protecting
-    every OTHER currently loaded model, which forces just this one out,
-    then force soft_empty_cache() and do a manual gc/cuda cache clear.
-    Never raises - a failed cleanup should never break the node's
-    actual output."""
-    if model_management is None:
-        return
-    patcher = getattr(clip, "patcher", None)
-    if patcher is None:
-        return
-    try:
-        loaded = model_management.loaded_models()
-        if patcher in loaded:
-            loaded.remove(patcher)
-        model_management.free_memory(1e30, model_management.get_torch_device(), loaded)
-        model_management.soft_empty_cache(True)
-    except Exception:
-        pass
-    try:
-        import gc
-        import torch
-        gc.collect()
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
-    except Exception:
-        pass
-
-
-def _count_prompt_tokens(tokens):
-    """Best-effort count of how many tokens `tokens` (as returned by
-    clip.tokenize()) actually holds - see the matching helper in
-    mykee_prompt_modifier.py for the full rationale (ComfyUI's
-    CLIP.generate() treats max_length as a TOTAL prompt+completion budget,
-    not a completion-only one). Returns None if the tokens structure isn't
-    the expected {encoder_name: [[(token_id, weight), ...], ...]} shape."""
-    try:
-        total = 0
-        for chunks in tokens.values():
-            for chunk in chunks:
-                total += len(chunk)
-        return total
-    except Exception:
-        return None
-
-
-def _think_suffix(clip, thinking):
-    """Assistant-turn suffix for Qwen3.5-family clips.
-
-    Qwen3.5 thinks by default. ComfyUI's tokenizer only adds the <think>
-    control text when it applies its own chat template, and that is skipped
-    here because this node builds the chat text itself (it starts with
-    "<|im_start|>"). Without this suffix the "thinking" toggle does nothing,
-    and an open <think> block can use up the whole token budget (it is then
-    stripped below, leaving an empty response). So add exactly what
-    ComfyUI's own template would add - for Qwen3.5 clips only; every other
-    model is left untouched.
-    """
-    for obj in (getattr(clip, "tokenizer", None), getattr(clip, "cond_stage_model", None)):
-        if "qwen35" in type(obj).__name__.lower():
-            return "<think>\n" if thinking else "<think>\n\n</think>\n\n"
-    return ""
-
-
-def _empty_response_message(raw_output):
-    """Explain WHY the stripped response is empty."""
-    if "<think>" in raw_output and "</think>" not in raw_output:
-        return ("the model used up its max_length budget while still "
-                "thinking - raise max_length or turn thinking off")
-    return "the model returned an empty response"
-
-
-def _restore_think_open(clip, thinking, raw_output):
-    """When the prompt itself already ended with the opening "<think>\n"
-    (thinking on, see _think_suffix), the model's answer starts INSIDE the
-    block, so the decoded text has no opening tag. Put it back so the
-    <think>...</think> stripping treats the reasoning as one block (and an
-    unfinished block is recognised as one, not mistaken for the answer)."""
-    if _think_suffix(clip, thinking) == "<think>\n":
-        return "<think>\n" + raw_output
-    return raw_output
 
 
 def _toast(node_id, severity, summary, detail):
@@ -303,8 +219,8 @@ class MykeePromptAdvanced:
                     "multiline": True, "default": "",
                     "tooltip": "Leave empty to use the built-in instruction "
                                "(text-only: paraphrase the prompt back; "
-                               "image mode: describe the image fully). Fill "
-                               "in to override either default.",
+                               "image/video/audio mode: describe the input "
+                               "fully). Fill in to override the default.",
                 }),
                 "max_length": ("INT", {
                     "default": 512, "min": 32, "max": 4096, "step": 8,
@@ -358,11 +274,11 @@ class MykeePromptAdvanced:
                 }),
                 "thinking": ("BOOLEAN", {
                     "default": False,
-                    "tooltip": "Let a thinking-capable model reason in a "
-                               "<think>...</think> block before answering. "
-                               "The block is stripped from reason_text either "
-                               "way; this only controls whether the model is "
-                               "allowed to use it at all.",
+                    "tooltip": "Let a thinking-capable model (Gemma 4, "
+                               "Qwen3.5, ...) reason before answering. The "
+                               "reasoning is never mixed into reason_text - "
+                               "it goes to the separate 'thinking' output "
+                               "(and the thinking box on the node).",
                 }),
                 "unload_after_run": ("BOOLEAN", {
                     "default": False,
@@ -380,144 +296,123 @@ class MykeePromptAdvanced:
                                "If the connected clip can't read images, a "
                                "toast will say so and the image is ignored.",
                 }),
+                "video": ("IMAGE", {
+                    "tooltip": "Optional (Gemma 4). Video frames as an image "
+                               "batch (e.g. from a Load Video node). Assumed "
+                               "to be 24 FPS and sub-sampled to 1 FPS "
+                               "internally, like ComfyUI's own Generate Text "
+                               "node. If a video and an image are both "
+                               "connected, the video is used.",
+                }),
+                "audio": ("AUDIO", {
+                    "tooltip": "Optional (Gemma 4 variants with audio "
+                               "support, e.g. E2B/E4B). The model hears the "
+                               "audio and describes/answers about it. Can be "
+                               "combined with image or video; very long "
+                               "audio may be cut off by the model.",
+                }),
+                "template_mode": (TEMPLATE_MODES, {
+                    "default": "auto",
+                    "tooltip": TEMPLATE_MODE_TOOLTIP,
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
-    # NOTE: "response_display" is deliberately NOT a declared input - see
-    # the matching note in mykee_prompt_modifier.py. It's created purely
-    # client-side in web/mykee_prompt_clarity.js and filled in only
-    # through the {"ui": {...}} channel below.
+    # NOTE: "response_display"/"thinking_display" are deliberately NOT
+    # declared inputs - see the matching note in mykee_prompt_modifier.py.
+    # They're created purely client-side in web/mykee_prompt_clarity.js and
+    # filled in only through the {"ui": {...}} channel below.
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("prompt", "reason_text")
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("prompt", "reason_text", "thinking")
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
     OUTPUT_NODE = True
 
     def run(self, clip, prompt, prompt_rewrite, system_prompt, max_length, sampling_mode,
             seed, temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty,
-            thinking=False, unload_after_run=False, image=None,
-            node_id=None):
+            thinking=False, unload_after_run=False, image=None, video=None, audio=None,
+            template_mode="auto", node_id=None):
         if not prompt_rewrite:
             # Plain text-field mode: no tokenize/generate call at all, so
             # the connected clip never gets moved onto the GPU by this node.
             print("Mykee Prompt Advanced: prompt_rewrite is off - passing prompt through unchanged.")
-            return {"ui": {"response_display": [prompt]}, "result": (prompt, prompt)}
+            return {"ui": {"response_display": [prompt], "thinking_display": [""]},
+                    "result": (prompt, prompt, "")}
 
         custom_sys = system_prompt.strip() if system_prompt and system_prompt.strip() else None
         if custom_sys and "{max_length}" in custom_sys:
             custom_sys = custom_sys.format(max_length=int(max_length))
         # NOTE: we deliberately do NOT hand-insert an empty <think></think>
-        # pair to suppress reasoning. silveroxides/ComfyUI-UtilsCollection's
-        # own preset table uses a DIFFERENT suppression string per model
-        # (some none at all) - there's no single universal string, and
-        # guessing wrong actively breaks generation (confirmed: it did,
-        # for this exact Qwen3-VL-4B checkpoint). Instead we just forward
-        # thinking=thinking to clip.tokenize() below and let ComfyUI's own,
-        # model-aware tokenizer logic decide what (if anything) to do.
+        # pair to suppress reasoning. There is no single universal string,
+        # and guessing wrong actively breaks generation (confirmed: it did,
+        # for a Qwen3-VL-4B checkpoint). The thinking flag is forwarded to
+        # ComfyUI's own tokenizer instead (see mykee_llm_common.py), which
+        # knows each model's template - for Gemma 4 it builds the whole
+        # <|turn> template, <|think|> flag and image/video/audio tokens.
 
-        tokens = None
+        def make_prompts(kind):
+            if kind is None:
+                sys_text = custom_sys or DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+                return sys_text, prompt
+            if custom_sys:
+                sys_text = custom_sys
+            elif kind == "audio":
+                sys_text = AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+            else:
+                sys_text = (media_preamble(image, video, audio)
+                            + IMAGE_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length)))
+            user_text = prompt.strip() if prompt and prompt.strip() else DEFAULT_USER_TEXT[kind]
+            return sys_text, user_text
+
         reason_text = None
-
-        # ---- image mode: try it first if an image is connected -----------
-        if image is not None:
-            sys_text = custom_sys or IMAGE_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
-            user_text = prompt.strip() if prompt and prompt.strip() else "Describe this image in full detail."
-            # The Qwen3-VL tokenizer auto-detects text starting with
-            # "<|im_start|>" and, in that case, uses it VERBATIM instead of
-            # applying its own default chat template - which is also where
-            # it would normally insert the image placeholder token. So when
-            # we hand-build the chat text ourselves (to get a custom system
-            # prompt), we must also insert that placeholder ourselves, in
-            # the same spot the built-in template uses: right at the start
-            # of the user turn, before the user's own text.
-            chat_text = (
-                f"<|im_start|>system\n{sys_text}<|im_end|>\n"
-                f"<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>{user_text}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            chat_text += _think_suffix(clip, thinking)
-            try:
-                tokens = clip.tokenize(chat_text, image=image, skip_template=True, min_length=1, thinking=thinking)
-            except TypeError:
-                _toast(
-                    node_id, "warn", "Mykee Prompt Advanced",
-                    "The connected clip doesn't support image input (not a "
-                    "VL model) - the image was ignored.",
-                )
-                tokens = None
-            except Exception as e:
-                reason_text = f"[image tokenization failed: {type(e).__name__}: {e}]"
-
-        # ---- text-only mode: no image, or image mode above didn't run ----
-        if tokens is None and reason_text is None:
-            sys_text = custom_sys or DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
-            chat_text = (
-                f"<|im_start|>system\n{sys_text}<|im_end|>\n"
-                f"<|im_start|>user\n{prompt}<|im_end|>\n"
-                f"<|im_start|>assistant\n"
-            )
-            chat_text += _think_suffix(clip, thinking)
-            try:
-                # this text also starts with "<|im_start|>", so it's used
-                # verbatim - see the comment in the image branch above.
-                tokens = clip.tokenize(chat_text, skip_template=True, min_length=1, thinking=thinking)
-            except Exception as e:
-                reason_text = f"[tokenization failed: {type(e).__name__}: {e}]"
+        thinking_text = ""
+        tokens = chat_text = None
+        used_kind = None
+        try:
+            tokens, chat_text, notes, used_kind = tokenize_for(
+                clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
+                template_mode=template_mode)
+            for note in notes:
+                _toast(node_id, "warn", "Mykee Prompt Advanced", note)
+        except Exception as e:
+            reason_text = f"[tokenization failed: {type(e).__name__}: {e}]"
 
         # ---- generation -----------------------------------------------
         if reason_text is None:
-            # max_length here is a TOTAL sequence budget for clip.generate()
-            # (prompt + completion) - see _count_prompt_tokens() above.
-            # Inflate it by however many tokens the prompt itself just
-            # used, so the `max_length` widget keeps meaning what it
-            # visually promises: room for the generated response, on top
-            # of however long the prompt is.
-            prompt_token_count = _count_prompt_tokens(tokens)
-            if prompt_token_count is None:
-                prompt_token_count = len(chat_text) // 3
-            effective_max_length = prompt_token_count + int(max_length)
             try:
-                generated_ids = clip.generate(
-                    tokens,
-                    do_sample=bool(sampling_mode),
-                    max_length=effective_max_length,
-                    temperature=float(temperature),
-                    top_k=int(top_k),
-                    top_p=float(top_p),
-                    min_p=float(min_p),
-                    repetition_penalty=float(repetition_penalty),
-                    presence_penalty=float(presence_penalty),
-                    seed=int(seed),
-                )
-                reason_text = _restore_think_open(clip, thinking, clip.decode(generated_ids))
-                # safety net in case a thinking-capable model still emits a
-                # <think> block despite no thinking request
-                raw_output = reason_text
-                reason_text = re.sub(r"<think>.*?(?:</think>|$)", "", reason_text, flags=re.DOTALL).strip()
+                raw_output = generate_text(
+                    clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
+                    top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking)
+                # the thinking block never stays in the answer; it is
+                # returned separately (also when thinking was not asked for
+                # but a thinking-capable model produced one anyway)
+                reason_text, thinking_text = split_thinking(raw_output)
                 if not reason_text:
-                    reason_text = f"[{_empty_response_message(raw_output)}]"
+                    reason_text = f"[{empty_response_message(raw_output)}]"
             except Exception as e:
                 reason_text = (
                     f"[generation failed: {type(e).__name__}: {e}]\n"
-                    "Make sure 'clip' here is a generation-capable chat "
-                    "model, not an encoder with no LM head wired up for "
-                    "generation in ComfyUI (e.g. Krea2's own Qwen3-VL "
-                    "conditioning encoder)."
+                    + generation_error_hint(used_kind is not None)
                 )
 
         print("=" * 70)
         print("Mykee Prompt Advanced")
         print("=" * 70)
         print(f"Prompt: {prompt!r}")
-        print(f"Image connected: {image is not None}")
+        print(f"Media sent: {used_kind or 'none (text-only)'}")
+        if thinking_text:
+            print("--- thinking ---")
+            print(thinking_text)
+            print("--- answer ---")
         print("")
         print(reason_text)
 
         if unload_after_run:
             _unload_clip(clip)
 
-        return {"ui": {"response_display": [reason_text]}, "result": (prompt, reason_text)}
+        return {"ui": {"response_display": [reason_text], "thinking_display": [thinking_text]},
+                "result": (prompt, reason_text, thinking_text)}
 
 
 NODE_CLASS_MAPPINGS = {

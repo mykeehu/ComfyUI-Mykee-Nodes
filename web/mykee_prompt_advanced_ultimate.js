@@ -2,10 +2,14 @@ import { app } from "../../scripts/app.js";
 import { ComfyWidgets } from "../../scripts/widgets.js";
 
 const NODE_NAME = "MykeePromptAdvancedUltimate";
-const DISPLAY_WIDGET_NAMES = ["response_1_display", "response_2_display", "tags_1_display"];
+const DISPLAY_WIDGET_NAMES = [
+    "response_1_display", "thinking_1_display", "response_2_display", "thinking_2_display", "tags_1_display",
+];
 const COPY_LABELS = {
     response_1_display: "📋 Copy response 1",
+    thinking_1_display: "📋 Copy thinking 1",
     response_2_display: "📋 Copy response 2",
+    thinking_2_display: "📋 Copy thinking 2",
     tags_1_display: "📋 Copy tags 1",
 };
 
@@ -183,7 +187,7 @@ app.registerExtension({
                 w.serialize = false;
                 if (w.inputEl) {
                     w.inputEl.readOnly = true;
-                    w.inputEl.placeholder = "(filled in after running)";
+                    w.inputEl.placeholder = name.startsWith("thinking") ? "(thinking text - filled in after running with thinking on)" : "(filled in after running)";
                     w.inputEl.style.opacity = "0.75";
                 }
                 addCopyButton(this, name, COPY_LABELS[name]);
