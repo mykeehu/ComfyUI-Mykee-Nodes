@@ -33,8 +33,14 @@ const NODE_NAME = "MykeeSizeSwitchBatch";
 const CONFIG_WIDGET = "pairs_config";
 const MAX_PAIRS = 32;
 const MIN_SIZE = 16;
-const MIN_NODE_WIDTH = 300;
+const MIN_NODE_WIDTH = 320;
 const MAX_SIZE = 16384;
+// How far the width / height fields are shifted to the right. The socket of a
+// field has a click area that reaches over the first part of the field, and
+// the left arrow is only usable between the end of that area and the end of
+// the arrow zone (40 + WIDGET_INDENT px from the node's left edge): a bigger
+// indent makes that stretch wider.
+const WIDGET_INDENT = 32;
 
 function widget(node, name) {
     return node.widgets?.find((w) => w.name === name);
@@ -149,10 +155,48 @@ function parseRatio(text) {
     return a > 0 && b > 0 ? [a, b] : null;
 }
 
+const DEFAULT_STEP = 8; // the step of the arrows when divisible_by is Off
+
+// The arrows and dragging step by the divisor, so one click always lands on
+// the next valid number (with a step of 8 and a divisor of 16, 1024 - 8 would
+// be rounded straight back to 1024).
+function applyStep(node) {
+    const step = divisor(node) || DEFAULT_STEP;
+    for (let i = 1; i <= MAX_PAIRS; i++) {
+        for (const axis of ["width", "height"]) {
+            const w = widget(node, `${axis}_${i}`);
+            if (!w) continue;
+            w.options = w.options || {};
+            w.options.step2 = step;
+            w.options.step = step * 10;
+        }
+    }
+}
+
+// Remembers the numbers of a pair, to tell an arrow click from typing.
+function rememberPair(node, i) {
+    for (const axis of ["width", "height"]) {
+        const w = widget(node, `${axis}_${i}`);
+        if (w) w._mykeeLast = Number(w.value);
+    }
+}
+
+// Fallback for frontends that ignore the step above: a change of exactly one
+// default step that the rounding would undo moves one divisor instead.
+function nudge(node, w) {
+    const div = divisor(node);
+    const prior = w._mykeeLast;
+    const value = Number(w.value);
+    if (!div || div <= DEFAULT_STEP || !Number.isFinite(prior)) return;
+    if (Math.abs(value - prior) === DEFAULT_STEP && value % div !== 0) {
+        w.value = prior + Math.sign(value - prior) * div;
+    }
+}
+
 // Rounds the typed numbers of one pair and, with a ratio, calculates the side
 // that does not lead. A side that arrives through a connection is left alone
 // (its value is not known here); the backend handles it.
-function applyPair(node, i) {
+function applyPairRaw(node, i) {
     const wWidget = widget(node, `width_${i}`);
     const hWidget = widget(node, `height_${i}`);
     if (!wWidget || !hWidget) return;
@@ -183,6 +227,11 @@ function applyPair(node, i) {
     } else if (!hLinked) {
         // the connected width leads: its value is unknown here, keep the typed height
     }
+}
+
+function applyPair(node, i) {
+    applyPairRaw(node, i);
+    rememberPair(node, i);
 }
 
 function applyAll(node) {
@@ -252,6 +301,59 @@ function syncPairs(node) {
     }
 }
 
+// Draws a number widget a little narrower and shifted to the right, so there
+// is a gap between its socket and the field, and the width / height fields
+// stand out as a group under the "Pair N" row. The left margin of a widget is
+// a fixed value in the frontend, so the drawing is shifted here, and so are
+// the clicks (the left arrow zone is measured from the node's left edge).
+function indentWidget(w) {
+    if (!w || w._mykeeIndented) return;
+    w._mykeeIndented = true;
+
+    if (typeof w.drawWidget === "function") {
+        const drawWidget = w.drawWidget;
+        w.drawWidget = function (ctx, options) {
+            ctx.save();
+            ctx.translate(WIDGET_INDENT, 0);
+            try {
+                return drawWidget.call(this, ctx, { ...options, width: (options?.width ?? 0) - WIDGET_INDENT });
+            } finally {
+                ctx.restore();
+            }
+        };
+    } else if (typeof w.draw === "function") {
+        const draw = w.draw; // older frontends: draw(ctx, node, widgetWidth, y, height)
+        w.draw = function (ctx, node, widgetWidth, ...rest) {
+            ctx.save();
+            ctx.translate(WIDGET_INDENT, 0);
+            try {
+                return draw.call(this, ctx, node, widgetWidth - WIDGET_INDENT, ...rest);
+            } finally {
+                ctx.restore();
+            }
+        };
+    }
+
+    if (typeof w.onClick === "function") {
+        const onClick = w.onClick;
+        w.onClick = function (options) {
+            const e = options?.e;
+            const node = options?.node;
+            // Left half only: the right arrow keeps its place.
+            if (e && node && typeof e.canvasX === "number" && e.canvasX - node.pos[0] < node.size[0] / 2) {
+                const saved = e.canvasX;
+                e.canvasX = saved - WIDGET_INDENT;
+                try {
+                    return onClick.call(this, options);
+                } finally {
+                    e.canvasX = saved;
+                }
+            }
+            return onClick.call(this, options);
+        };
+    }
+}
+
 // Writes the stored selection into the use_N toggles, with labels that fit
 // the current mode.
 function refreshToggles(node) {
@@ -294,6 +396,8 @@ function refreshDisabled(node) {
 function refreshAll(node) {
     syncPairs(node);
     refreshDisabled(node);
+    applyStep(node);
+    for (let i = 1; i <= MAX_PAIRS; i++) rememberPair(node, i);
     refreshToggles(node);
     fitHeight(node);
 }
@@ -379,11 +483,14 @@ function setupNode(node) {
         for (const axis of ["width", "height"]) {
             const w = widget(node, `${axis}_${i}`);
             if (!w) continue;
+            w.label = axis; // the "Pair N" row above says which pair it is
+            indentWidget(w);
             w.serializeValue = () => (usedPairs(node).includes(i) ? w.value : MIN_SIZE);
             const callback = w.callback;
             w.callback = function () {
                 const ret = callback?.apply(this, arguments);
                 // The side edited last leads when a ratio is set.
+                nudge(node, w);
                 const state = readState(node);
                 state.driver[i - 1] = axis === "width" ? "w" : "h";
                 writeState(node, state);
@@ -414,6 +521,7 @@ function setupNode(node) {
         const callback = divisorWidget.callback;
         divisorWidget.callback = function () {
             const ret = callback?.apply(this, arguments);
+            applyStep(node);
             applyAll(node);
             return ret;
         };
