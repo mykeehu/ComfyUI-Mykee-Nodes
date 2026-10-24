@@ -70,6 +70,27 @@ Assembler outputs:
   headers = X values, row headers = Y values, title = the parameters on the
   axes + seed), stacked below each other.
 - **plot_per_z** - the same grids as a batch, one image per Z value.
+- **info** - a text with the plot size, the seed and the full value list of
+  every used axis, e.g.:
+
+  ```
+  XYZ Plot: 3 x 2 x 1 = 6 images
+  Seed: 123
+
+  X (cfg):
+  - 5
+  - 7.5
+  - 10
+
+  Y (sampler_name):
+  - euler
+  - dpmpp_2m
+  ```
+
+  Values are not shortened (model names keep folder and extension). Like
+  the images, it is only produced once the last cell has finished; connect
+  it to a Save Text node (or any text input) to keep a record of what the
+  plot was made with.
 
 Notes:
 

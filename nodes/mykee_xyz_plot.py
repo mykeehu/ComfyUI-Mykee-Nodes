@@ -22,7 +22,9 @@ ANY node:
   The preview image lives in ComfyUI's temp folder. By default only ONE
   temp file per Assembler node is kept and overwritten after every cell
   (a big plot can be a huge image); "save_every_plot" switches back to a
-  separate temp file for every cell's partial plot.
+  separate temp file for every cell's partial plot. Together with the
+  plot it outputs an "info" text (the seed and the full X / Y / Z value
+  lists), so a Save Text node can document what the plot was made with.
 
 The x / y / z outputs are only really used when a prompt reaches the server
 without the frontend (e.g. an API call): then the node outputs the values
@@ -139,13 +141,15 @@ def _cast(value, value_type):
     return str(value)
 
 
-def _format_value(value, value_type):
+def _format_value(value, value_type, short=True):
     if value_type == "FLOAT":
         text = f"{float(value):.4f}".rstrip("0").rstrip(".")
         return text if text not in ("", "-0") else "0"
     if value_type == "BOOLEAN":
         return "true" if _cast(value, "BOOLEAN") else "false"
     text = str(value)
+    if not short:
+        return text
     # Model file names: the folder part and extension only add noise.
     if text.lower().endswith(MODEL_EXTENSIONS):
         text = os.path.splitext(text.replace("\\", "/").rsplit("/", 1)[-1])[0]
@@ -264,6 +268,8 @@ class MykeeXYZPlot:
                 {
                     "label": str(axis.get("label") or axis.get("param") or "?"),
                     "value_labels": [_format_value(v, value_type) for v in axis["values"]],
+                    # Unshortened (folder + extension kept) - used by the info text.
+                    "value_full": [_format_value(v, value_type, short=False) for v in axis["values"]],
                 }
             )
 
@@ -475,6 +481,26 @@ def _to_pil(image_tensor):
     return Image.fromarray(array)
 
 
+def _build_info_text(info):
+    """Plain-text summary of a plot: size, seed and the full value list of
+    every used axis. Values are not shortened (model names keep their folder
+    and extension), so the text documents exactly what was used."""
+    dims = info["dims"]
+    lines = [f"XYZ Plot: {dims[0]} x {dims[1]} x {dims[2]} = {info['total']} images"]
+    if info.get("seed") is not None:
+        lines.append(f"Seed: {info['seed']}")
+    for name, axis in zip(AXIS_NAMES, info["axes"]):
+        if not axis:
+            continue
+        lines.append("")
+        lines.append(f"{name} ({axis['label']}):")
+        for value in axis.get("value_full") or axis["value_labels"]:
+            first, *rest = str(value).split("\n")
+            lines.append(f"- {first}")
+            lines.extend(f"  {extra}" for extra in rest)
+    return "\n".join(lines)
+
+
 # ---------------------------------------------------------------------------
 # Assembler node
 # ---------------------------------------------------------------------------
@@ -483,12 +509,15 @@ class MykeeXYZPlotAssembler:
     CATEGORY = "Mykee/Utils"
     FUNCTION = "main"
     OUTPUT_NODE = True
-    RETURN_TYPES = ("IMAGE", "IMAGE")
-    RETURN_NAMES = ("plot", "plot_per_z")
+    RETURN_TYPES = ("IMAGE", "IMAGE", "STRING")
+    RETURN_NAMES = ("plot", "plot_per_z", "info")
     OUTPUT_TOOLTIPS = (
         "The whole table in one image (Z grids stacked below each other). "
         "Only produced once the last cell has finished.",
         "One grid image per Z value, as a batch.",
+        "Text with the seed and the full X / Y / Z value lists (one bullet list per "
+        "axis). Only produced once the last cell has finished - connect it to a "
+        "Save Text node to keep a record of what the plot used.",
     )
 
     @classmethod
@@ -552,11 +581,14 @@ class MykeeXYZPlotAssembler:
 
         if done < total:
             blocked = ExecutionBlocker(None) if ExecutionBlocker is not None else None
-            return {"ui": preview, "result": (blocked, blocked)}
+            return {"ui": preview, "result": (blocked, blocked, blocked)}
 
         _RUNS.pop(run_id, None)  # finished - free the cell images
         self._print_summary(_TIMINGS.pop(run_id, None), total)
-        return {"ui": preview, "result": (_to_tensor([combined]), _to_tensor(blocks))}
+        return {
+            "ui": preview,
+            "result": (_to_tensor([combined]), _to_tensor(blocks), _build_info_text(xyz_info)),
+        }
 
     @staticmethod
     def _print_summary(timing, total):
