@@ -95,7 +95,7 @@ import re
 from .mykee_llm_common import (
     empty_response_message, generate_text, generation_error_hint, media_preamble,
     split_thinking, tokenize_for, unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
-    THINKING_BUDGET_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP, quote_text, strip_quote_marks,
 )
 
 try:
@@ -439,8 +439,9 @@ def _build_patch_user_text(split, edit_text):
         for sentence in para:
             n += 1
             lines.append(f"{n}. {sentence}")
-    text = "PROMPT SENTENCES:\n" + ("\n".join(lines) if lines else "(none)")
-    text += "\n\nTAGS: " + (", ".join(split["tags"]) if split["tags"] else "(none)")
+    # Sentences and tags are material to edit, not instructions - delimit them.
+    text = "PROMPT SENTENCES:\n" + (quote_text("\n".join(lines)) if lines else "(none)")
+    text += "\n\nTAGS: " + (quote_text(", ".join(split["tags"])) if split["tags"] else "(none)")
     return text + f"\n\nEDIT INSTRUCTION:\n{edit_text}"
 
 
@@ -808,7 +809,7 @@ class MykeePromptModifier:
                 if kind is None:
                     sys_text = custom_sys or text_template.format(max_length=int(max_length))
                     user_text = (
-                        f"PROMPT:\n{prompt}\n\n"
+                        f"PROMPT:\n{quote_text(prompt)}\n\n"
                         f"EDIT INSTRUCTION:\n"
                         f"{edit_text if edit_text else '(none given - return PROMPT unchanged.)'}"
                     )
@@ -822,7 +823,7 @@ class MykeePromptModifier:
                 else:
                     user_text = f"EDIT INSTRUCTION: (none given - just describe the {kind} as it is.)"
                 if context_text:
-                    user_text = f"Context: {context_text}\n{user_text}"
+                    user_text = f"Context: {quote_text(context_text)}\n{user_text}"
                 return sys_text, user_text
 
             tokens = chat_text = None
@@ -872,6 +873,7 @@ class MykeePromptModifier:
                         print("Mykee Prompt Modifier: no '===FINAL===' marker "
                               "found in the model's response - using the full "
                               "response as-is.")
+                    edited_prompt = strip_quote_marks(edited_prompt)
                     if not edited_prompt:
                         edited_prompt = f"[{empty_response_message(raw_output)}]"
                 except Exception as e:

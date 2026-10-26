@@ -159,7 +159,7 @@ from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
-    THINKING_BUDGET_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP, quote_text, strip_quote_marks,
 )
 
 try:
@@ -711,6 +711,10 @@ class MykeePromptAdvancedUltimate:
             if kind is None:
                 sys_text = custom_sys_1 or STAGE1_TEXT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
                 user_text = prompt
+                # The prompt is material to describe, not an instruction to
+                # carry out - delimit it so the model can tell the difference.
+                if prompt and prompt.strip():
+                    user_text = quote_text(prompt)
             else:
                 if custom_sys_1:
                     sys_text = custom_sys_1
@@ -740,10 +744,10 @@ class MykeePromptAdvancedUltimate:
 
             if second_mode == "edit":
                 sys_text_2 = custom_sys_2 or TEXT_EDIT_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(second_max_length))
-                user_text_2 = f"PROMPT:\n{response_1}\n\nEDIT INSTRUCTION:\n{second_prompt_text}"
+                user_text_2 = f"PROMPT:\n{quote_text(response_1)}\n\nEDIT INSTRUCTION:\n{second_prompt_text}"
             else:  # "analyze"
                 sys_text_2 = custom_sys_2 or STAGE2_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(second_max_length))
-                user_text_2 = f"RESPONSE 1:\n{response_1}\n\n{second_prompt_text}"
+                user_text_2 = f"RESPONSE 1:\n{quote_text(response_1)}\n\n{second_prompt_text}"
 
             response_2, thinking_2, _ = self._generate_stage(
                 clip, lambda kind: (sys_text_2, user_text_2), None, None, None,
@@ -766,6 +770,7 @@ class MykeePromptAdvancedUltimate:
                 print("Mykee Prompt Advanced Ultimate: no '===FINAL===' "
                       "marker found in stage 2's response - using the "
                       "full response as-is.")
+            response_2 = strip_quote_marks(response_2)
         else:
             response_2 = response_1
 

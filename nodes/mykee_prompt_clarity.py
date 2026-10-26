@@ -110,7 +110,7 @@ from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
-    THINKING_BUDGET_TOOLTIP,
+    THINKING_BUDGET_TOOLTIP, quote_text,
 )
 
 try:
@@ -359,6 +359,10 @@ class MykeePromptAdvanced:
         def make_prompts(kind):
             if kind is None:
                 sys_text = custom_sys or DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(max_length))
+                # The prompt is material to describe, not an instruction to
+                # carry out - delimit it so the model can tell the difference.
+                if prompt and prompt.strip():
+                    return sys_text, quote_text(prompt)
                 return sys_text, prompt
             if custom_sys:
                 sys_text = custom_sys

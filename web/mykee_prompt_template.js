@@ -40,6 +40,12 @@ import { api } from "../../scripts/api.js";
  *     the text is never loaded invisibly. Workflows saved before this
  *     switch existed come back with it on if they held a negative prompt.
  *
+ * The picker itself is not serialized (it is just a view of the folder),
+ * but template_name is - so after a workflow-tab switch or page reload the
+ * picker is re-pointed at whatever template_name holds, as long as that
+ * template still exists on disk. It is also emptied by "New" and when
+ * template_name no longer matches a stored template.
+ *
  * Unlike the StyleGAN Vector Save node, none of this needs the graph to
  * run - there's no "armed" gate here, Save just fires the REST call
  * immediately.
@@ -178,6 +184,9 @@ app.registerExtension({
                 }
                 if (this._mykeeApplyNegativeVisibility) this._mykeeApplyNegativeVisibility();
             }
+            // Show the last loaded template right away (template_name was just
+            // restored); the list refresh below then confirms it against disk.
+            if (this._mykeeSyncPicker) this._mykeeSyncPicker(true);
             if (this._mykeeRefreshTemplateList) this._mykeeRefreshTemplateList();
             return ret;
         };
@@ -257,6 +266,18 @@ app.registerExtension({
             // so a stale pick shouldn't persist across page reloads.
             listWidget.serialize = false;
 
+            // Point the (non-serialized) picker at template_name. With
+            // optimistic=true the name is shown even before the list has
+            // been read from disk; otherwise it is only shown if a template
+            // of that name actually exists.
+            const syncPicker = (optimistic = false) => {
+                const name = (nameWidget.value || "").trim();
+                const known = existingNames.includes(name);
+                listWidget.value = name && (known || optimistic) ? name : "";
+                this.setDirtyCanvas(true, true);
+            };
+            this._mykeeSyncPicker = syncPicker;
+
             // Guards against out-of-order responses: if two refreshes are in
             // flight (e.g. one fired at node creation with the default path,
             // another after the saved custom_path was restored), only the
@@ -274,6 +295,7 @@ app.registerExtension({
                     existingNames.length = 0;
                     existingNames.push(...(data.templates || []));
                     if (listWidget.options) listWidget.options.values = existingNames;
+                    syncPicker();
                     this.setDirtyCanvas(true, true);
                     return existingNames;
                 } catch (e) {
@@ -303,6 +325,7 @@ app.registerExtension({
                 nameWidget.value = "";
                 positiveWidget.value = "";
                 negativeWidget.value = "";
+                listWidget.value = "";
                 this.setDirtyCanvas(true, true);
             });
             newBtn.serialize = false;

@@ -383,6 +383,33 @@ AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "under {max_length} tokens, and make sure it ends as a complete sentence."
 )
 
+# --------------------------------------------------------------------------
+# Quoting user-supplied material
+# --------------------------------------------------------------------------
+# Text that is meant to be PROCESSED (described, edited) - as opposed to an
+# instruction/question meant to be carried out - is wrapped in triple quotes
+# before it goes into the user turn. Without a delimiter a model tends to
+# obey a prompt such as "draw a red car" instead of treating it as material.
+
+QUOTE_MARK = '"""'
+
+def quote_text(text):
+    """Wraps text in triple quotes (empty/blank text is returned unchanged)."""
+    if text is None or not str(text).strip():
+        return text
+    return f"{QUOTE_MARK}\n{str(text).strip()}\n{QUOTE_MARK}"
+
+
+def strip_quote_marks(text):
+    """Removes a triple-quote wrapper the model copied around its answer."""
+    if not isinstance(text, str):
+        return text
+    t = text.strip()
+    if len(t) >= 6 and t.startswith(QUOTE_MARK) and t.endswith(QUOTE_MARK):
+        return t[3:-3].strip()
+    return text
+
+
 DEFAULT_USER_TEXT = {
     "image": "Describe this image in full detail.",
     "video": "Describe this video in full detail.",
