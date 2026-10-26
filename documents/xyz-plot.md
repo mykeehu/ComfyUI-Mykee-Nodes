@@ -50,6 +50,19 @@ that, ComfyUI's cache only re-runs what actually changed between two cells:
   decoder saves each cell with its own correct metadata.
 - Random seeds (Mykee Seed at -1, KSampler "randomize") are resolved once
   per Run, so all cells of a plot use the same seed.
+- The controller's **seed** output is bypassed in each cell's prompt: nodes
+  connected to it are linked straight to whatever feeds the seed input, so
+  they are not re-run just because the cell number changed.
+
+**Re-running an unchanged plot** (`skip_if_unchanged`, on by default): ComfyUI
+only caches the result of the *last* cell, so a plain re-run would generate
+(nearly) the whole plot again. With this switch on, running again with
+nothing changed (same values, axes, seed and settings anywhere in the
+workflow) queues nothing - the previous result stays and a short "Nothing
+changed" notice is shown. Any change queues the plot as usual. A plot that
+failed or was interrupted never counts as finished. Turn the switch off to
+always generate the whole plot again. (Mykee Seed in "randomize" gets a new
+seed on every Run, so it counts as a change - use "fixed" to reuse a plot.)
 
 The Assembler shows the partial grid (missing cells in grey) after every
 cell. Its outputs are blocked until the last cell has arrived, so a Save

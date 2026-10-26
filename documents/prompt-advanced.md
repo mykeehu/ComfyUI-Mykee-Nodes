@@ -38,7 +38,11 @@ for this node instead (see
 ## Inputs
 
 - **clip** - the text/VL model. For image mode it must be a VL model.
-- **prompt** - the user turn. In image mode it is optional context.
+- **prompt** - the user turn. In text-only mode the text is sent to the
+  model wrapped in triple quotes (`"""..."""`), so it is treated as the
+  text to describe and never as an instruction to carry out (it does not
+  need quotes of its own). In image mode it is optional context / a
+  question and is sent as written.
 - **prompt_rewrite** - on by default. Turn it OFF to skip the model call
   completely (no VRAM load at all): `prompt` just passes through to both
   outputs, so the node works as a plain text field while the rest of the

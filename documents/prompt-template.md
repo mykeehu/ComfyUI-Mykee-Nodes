@@ -34,7 +34,11 @@ Picker and buttons:
   `custom_path` is right now) into the "Existing templates" picker -
   useful after adding/renaming a file by hand, or after changing
   `custom_path`. Also runs automatically when the node is created.
-- **🆕 New** - clears `template_name` and both prompt boxes, for
+  The picker itself is not saved with the workflow, but `template_name`
+  is: after switching to another workflow tab and back (or reloading the
+  page) the picker shows the last loaded template again, as long as a
+  template of that name still exists on disk.
+- **🆕 New** - clears `template_name`, the picker and both prompt boxes, for
   starting a fresh template from blank instead of editing whatever was
   last loaded/typed.
 - **💾 Save** - writes both prompt fields out together under

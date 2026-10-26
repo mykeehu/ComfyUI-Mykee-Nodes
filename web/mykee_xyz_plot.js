@@ -21,6 +21,15 @@
  * gets the cell index / run id in its xyz_config input, and passes the axis
  * labels on to the Assembler through xyz_info.
  *
+ * Re-running an unchanged workflow: ComfyUI only keeps the cached results of
+ * the LAST queued cell, so a plain re-run would regenerate (nearly) the whole
+ * plot. Therefore, when the "skip_if_unchanged" switch is on and the prompt is
+ * identical to the last plot that finished successfully, nothing is queued
+ * (the previous result simply stays). Any change - a value, an axis, the
+ * seed - queues the plot as usual. The controller's "seed" output is also
+ * bypassed (links to it go straight to the node that feeds the seed input),
+ * so nodes using it keep their cache across cells.
+ *
  * The wrapper is installed when this module loads, i.e. before any
  * extension's setup() runs. That makes it the innermost wrapper, so e.g.
  * Mykee Seed (which wraps in setup) resolves its random seed once per Run,
@@ -34,6 +43,7 @@ const CONFIG_WIDGET = "xyz_config";
 const AXES = ["X", "Y", "Z"]; // output slots 0, 1, 2
 const OUTPUT_NAMES = ["x", "y", "z"];
 const SUPPORTED_TYPES = ["INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"];
+const SEED_SLOT = 3; // output slot of the pass-through seed
 const CELL_CONFIRM_LIMIT = 100;
 const RANDOM_SEED_MAX = 2 ** 32;
 const MIN_WIDTH = 380;
@@ -237,6 +247,13 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId) {
         if (axis) slotValues[slot] = axis.values[index[slot]];
     });
 
+    // The "seed" output (slot 3) just passes its optional input through. Links
+    // to it are re-pointed at whatever feeds that input (a link, or 0 when
+    // unconnected), so the nodes behind it do not depend on the controller's
+    // per-cell config and stay cached between cells and runs.
+    const seedSource = output[sourceKey]?.inputs?.seed;
+    const seedReplacement = seedSource === undefined ? 0 : seedSource;
+
     const cellOutput = { ...output };
     for (const [key, entry] of Object.entries(output)) {
         if (!entry?.inputs) continue;
@@ -245,6 +262,9 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId) {
             if (isLinkTo(value, sourceKey) && value[1] in slotValues) {
                 inputs ??= { ...entry.inputs };
                 inputs[name] = slotValues[value[1]];
+            } else if (isLinkTo(value, sourceKey) && value[1] === SEED_SLOT) {
+                inputs ??= { ...entry.inputs };
+                inputs[name] = seedReplacement;
             }
         }
         if (inputs) cellOutput[key] = { ...entry, inputs };
@@ -327,24 +347,86 @@ function planFromPrompt(prompt) {
     return { sourceKey, config, dims, total: dims[0] * dims[1] * dims[2], loopOrder };
 }
 
+// Last plot that finished successfully (signature of its prompt), and the
+// run currently in progress (its signature + the cell prompt ids still
+// outstanding). A failed / interrupted prompt forgets both, so an unfinished
+// plot is never mistaken for a finished one.
+let lastDoneSignature = null;
+let pendingRun = null;
+
+function runFinished(promptId) {
+    if (!pendingRun || !pendingRun.ids.delete(promptId)) return;
+    if (pendingRun.queuedAll && pendingRun.ids.size === 0) {
+        lastDoneSignature = pendingRun.signature;
+        pendingRun = null;
+    }
+}
+
+function runFailed(promptId) {
+    if (pendingRun && pendingRun.ids.has(promptId)) {
+        pendingRun = null;
+        lastDoneSignature = null;
+    }
+}
+
+api.addEventListener("execution_success", (e) => runFinished(e.detail?.prompt_id));
+api.addEventListener("execution_error", (e) => runFailed(e.detail?.prompt_id));
+api.addEventListener("execution_interrupted", (e) => runFailed(e.detail?.prompt_id));
+
+function notifyUnchanged() {
+    const toast = app.extensionManager?.toast;
+    if (toast?.add) {
+        toast.add({
+            severity: "info",
+            summary: "Mykee XYZ Plot",
+            detail: "Nothing changed since the last finished plot - not re-running. "
+                + "(Turn off 'skip_if_unchanged' to force a re-run.)",
+            life: 5000,
+        });
+    } else {
+        console.info("[Mykee XYZ Plot] Nothing changed since the last finished plot - not re-running.");
+    }
+}
+
 const baseQueuePrompt = api.queuePrompt;
 api.queuePrompt = async function (number, prompt, ...rest) {
     const plan = planFromPrompt(prompt);
     if (!plan) return baseQueuePrompt.call(this, number, prompt, ...rest);
 
     const { sourceKey, config, dims, total, loopOrder } = plan;
+
+    const skipSwitch = prompt.output[sourceKey].inputs?.skip_if_unchanged;
+    const skipEnabled = skipSwitch === undefined ? true : !!skipSwitch;
+    const signature = JSON.stringify(prompt.output);
+    if (skipEnabled && lastDoneSignature === signature) {
+        notifyUnchanged();
+        return { number, node_errors: {} };
+    }
+    pendingRun = null;
+    lastDoneSignature = null;
     if (total > CELL_CONFIRM_LIMIT) {
         const ok = window.confirm(`Mykee XYZ Plot: this will queue ${total} prompts (${dims.join(" × ")}). Continue?`);
         if (!ok) throw new Error("Mykee XYZ Plot: queueing cancelled.");
     }
 
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const run = { signature, ids: new Set(), queuedAll: false };
+    pendingRun = run;
     let response;
     for (const cell of cellSequence(dims, loopOrder)) {
         const output = buildCellOutput(prompt.output, sourceKey, config, cell, dims, runId);
         response = await baseQueuePrompt.call(this, number, { ...prompt, output }, ...rest);
         const hasErrors = response?.node_errors && Object.keys(response.node_errors).length > 0;
-        if (hasErrors || !response?.prompt_id) return response; // let ComfyUI show the error
+        if (hasErrors || !response?.prompt_id) {
+            if (pendingRun === run) pendingRun = null;
+            return response; // let ComfyUI show the error
+        }
+        run.ids.add(response.prompt_id);
+    }
+    run.queuedAll = true;
+    if (pendingRun === run && run.ids.size === 0) {
+        lastDoneSignature = signature;
+        pendingRun = null;
     }
     return response;
 };

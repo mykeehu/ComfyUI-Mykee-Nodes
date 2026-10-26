@@ -217,6 +217,18 @@ class MykeeXYZPlot:
                         ),
                     },
                 ),
+                # After loop_order on purpose (widget positions of older workflows stay unchanged).
+                "skip_if_unchanged": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": (
+                            "On: running again with NOTHING changed (same values, axes, seed, settings) "
+                            "does not re-generate the plot - the previous result stays. Any change queues "
+                            "the plot as usual. Off: always generate the whole plot again."
+                        ),
+                    },
+                ),
             },
             "optional": {
                 "seed": (
@@ -233,8 +245,8 @@ class MykeeXYZPlot:
             },
         }
 
-    def main(self, xyz_config="{}", loop_order=None, seed=None):
-        # loop_order is read by the frontend when it queues the cells; nothing to do here.
+    def main(self, xyz_config="{}", loop_order=None, skip_if_unchanged=True, seed=None):
+        # loop_order and skip_if_unchanged are read by the frontend when it queues the cells; nothing to do here.
         cfg = _parse_config(xyz_config)
         axes = _active_axes(cfg)
         dims = [len(a["values"]) if a else 1 for a in axes]

@@ -40,7 +40,10 @@ sense with it off is fixed too, not left dangling.
   generation-capable, see Mykee Prompt Advanced).
 - **edit_instruction** - the change(s) to make, in plain language.
 - **prompt** - the prompt to edit (text mode), or optional context (image
-  mode).
+  mode). It is sent to the model wrapped in triple quotes (`"""..."""`), so
+  it is treated as the text to edit and never as an instruction to carry
+  out (no quotes of your own needed). The `edit_instruction` is sent as
+  written.
 - **prompt_rewrite** - OFF: no model call, no VRAM load; `prompt` passes
   through unchanged to both outputs.
 - **system_prompt** - empty = built-in default (surgical edit / understand

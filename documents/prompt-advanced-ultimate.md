@@ -71,7 +71,11 @@ the marker, `tags_1` stays empty.)
   [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio)). The
   media is used by stage 1 only.
 - **prompt** - stage 1's user turn (a question/focus/context in image mode;
-  the text to paraphrase in text-only mode).
+  the text to paraphrase in text-only mode). In text-only mode the text is
+  sent wrapped in triple quotes (`"""..."""`), so it is treated as text to
+  process and never as an instruction (no quotes of your own needed). In
+  stage 2 the text taken over from stage 1 (`PROMPT` / `RESPONSE 1`) is
+  quoted the same way; `second_prompt` is sent as written.
 - **prompt_rewrite** - master switch. OFF: no model calls for either
   stage, everything passes through, no VRAM load.
 - **system_prompt** - stage 1's system prompt (empty = built-in default).
