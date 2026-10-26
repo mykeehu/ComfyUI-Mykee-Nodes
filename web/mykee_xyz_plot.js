@@ -23,10 +23,16 @@
  *
  * Re-running an unchanged workflow: ComfyUI only keeps the cached results of
  * the LAST queued cell, so a plain re-run would regenerate (nearly) the whole
- * plot. Therefore, when the "skip_if_unchanged" switch is on and the prompt is
- * identical to the last plot that finished successfully, nothing is queued
- * (the previous result simply stays). Any change - a value, an axis, the
- * seed - queues the plot as usual. The controller's "seed" output is also
+ * plot. Therefore, with the "skip_if_unchanged" switch on:
+ *   - prompt identical to the last plot that finished successfully: nothing
+ *     is queued (the previous result simply stays);
+ *   - only nodes AFTER the Assembler changed / were added (e.g. a new Save
+ *     Image on its output): just the last cell is queued again, flagged
+ *     "reuse", and the Assembler hands out the finished plot it still holds
+ *     in memory - the plot is not generated again;
+ *   - anything else (a value, an axis, the seed, a node before the
+ *     Assembler) queues the plot as usual.
+ * The controller's "seed" output is also
  * bypassed (links to it go straight to the node that feeds the seed input),
  * so nodes using it keep their cache across cells.
  *
@@ -239,7 +245,7 @@ function isLinkTo(value, sourceKey) {
     return Array.isArray(value) && value.length === 2 && String(value[0]) === sourceKey;
 }
 
-function buildCellOutput(output, sourceKey, config, cell, dims, runId) {
+function buildCellOutput(output, sourceKey, config, cell, dims, runId, reuse = false) {
     const [nx, ny] = dims;
     const index = [cell % nx, Math.floor(cell / nx) % ny, Math.floor(cell / (nx * ny))];
     const slotValues = {};
@@ -274,7 +280,7 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId) {
         ...source,
         inputs: {
             ...source.inputs,
-            [CONFIG_WIDGET]: JSON.stringify({ ...config, run_id: runId, cell, total: dims[0] * dims[1] * dims[2] }),
+            [CONFIG_WIDGET]: JSON.stringify({ ...config, run_id: runId, cell, total: dims[0] * dims[1] * dims[2], reuse }),
         },
     };
     return cellOutput;
@@ -351,40 +357,71 @@ function planFromPrompt(prompt) {
 // run currently in progress (its signature + the cell prompt ids still
 // outstanding). A failed / interrupted prompt forgets both, so an unfinished
 // plot is never mistaken for a finished one.
-let lastDoneSignature = null;
+// lastDone = { full, core, runId, lastCell }: "full" is the whole prompt,
+// "core" the prompt without the nodes downstream of the Assembler.
+let lastDone = null;
 let pendingRun = null;
+
+function finishPending() {
+    lastDone = {
+        full: pendingRun.full,
+        core: pendingRun.core,
+        runId: pendingRun.runId,
+        lastCell: pendingRun.lastCell,
+    };
+    pendingRun = null;
+}
 
 function runFinished(promptId) {
     if (!pendingRun || !pendingRun.ids.delete(promptId)) return;
-    if (pendingRun.queuedAll && pendingRun.ids.size === 0) {
-        lastDoneSignature = pendingRun.signature;
-        pendingRun = null;
-    }
+    if (pendingRun.queuedAll && pendingRun.ids.size === 0) finishPending();
 }
 
 function runFailed(promptId) {
     if (pendingRun && pendingRun.ids.has(promptId)) {
         pendingRun = null;
-        lastDoneSignature = null;
+        lastDone = null;
     }
+}
+
+const ASSEMBLER_NAME = "MykeeXYZPlotAssembler";
+
+// Signature of the prompt without every node that sits downstream of an
+// Assembler (Save Image etc. on its outputs): if only those changed, the plot
+// itself does not have to be generated again.
+function coreSignature(output) {
+    const assemblers = Object.keys(output).filter((k) => output[k]?.class_type === ASSEMBLER_NAME);
+    if (!assemblers.length) return null;
+    const downstream = new Set();
+    let grew = true;
+    while (grew) {
+        grew = false;
+        for (const [key, entry] of Object.entries(output)) {
+            if (downstream.has(key) || assemblers.includes(key)) continue;
+            const linked = Object.values(entry?.inputs ?? {}).some(
+                (v) => Array.isArray(v) && v.length === 2 && (assemblers.includes(String(v[0])) || downstream.has(String(v[0])))
+            );
+            if (linked) {
+                downstream.add(key);
+                grew = true;
+            }
+        }
+    }
+    const core = {};
+    for (const [key, entry] of Object.entries(output)) if (!downstream.has(key)) core[key] = entry;
+    return JSON.stringify(core);
 }
 
 api.addEventListener("execution_success", (e) => runFinished(e.detail?.prompt_id));
 api.addEventListener("execution_error", (e) => runFailed(e.detail?.prompt_id));
 api.addEventListener("execution_interrupted", (e) => runFailed(e.detail?.prompt_id));
 
-function notifyUnchanged() {
+function notify(detail) {
     const toast = app.extensionManager?.toast;
     if (toast?.add) {
-        toast.add({
-            severity: "info",
-            summary: "Mykee XYZ Plot",
-            detail: "Nothing changed since the last finished plot - not re-running. "
-                + "(Turn off 'skip_if_unchanged' to force a re-run.)",
-            life: 5000,
-        });
+        toast.add({ severity: "info", summary: "Mykee XYZ Plot", detail, life: 5000 });
     } else {
-        console.info("[Mykee XYZ Plot] Nothing changed since the last finished plot - not re-running.");
+        console.info("[Mykee XYZ Plot] " + detail);
     }
 }
 
@@ -397,23 +434,49 @@ api.queuePrompt = async function (number, prompt, ...rest) {
 
     const skipSwitch = prompt.output[sourceKey].inputs?.skip_if_unchanged;
     const skipEnabled = skipSwitch === undefined ? true : !!skipSwitch;
-    const signature = JSON.stringify(prompt.output);
-    if (skipEnabled && lastDoneSignature === signature) {
-        notifyUnchanged();
-        return { number, node_errors: {} };
+    const full = JSON.stringify(prompt.output);
+    const core = coreSignature(prompt.output);
+    if (skipEnabled && lastDone) {
+        if (lastDone.full === full) {
+            notify("Nothing changed since the last finished plot - not re-running. "
+                + "(Turn off 'skip_if_unchanged' to force a re-run.)");
+            return { number, node_errors: {} };
+        }
+        if (core !== null && lastDone.core === core) {
+            // Only nodes after the Assembler changed: re-queue the last cell,
+            // flagged "reuse" - the Assembler returns the finished plot.
+            const reuseOutput = buildCellOutput(
+                prompt.output, sourceKey, config, lastDone.lastCell, dims, lastDone.runId, true);
+            const reuseRun = {
+                full, core, runId: lastDone.runId, lastCell: lastDone.lastCell,
+                ids: new Set(), queuedAll: false,
+            };
+            pendingRun = reuseRun;
+            const reuseResponse = await baseQueuePrompt.call(this, number, { ...prompt, output: reuseOutput }, ...rest);
+            const reuseErrors = reuseResponse?.node_errors && Object.keys(reuseResponse.node_errors).length > 0;
+            if (reuseErrors || !reuseResponse?.prompt_id) {
+                if (pendingRun === reuseRun) pendingRun = null;
+                return reuseResponse;
+            }
+            notify("The plot is unchanged - reusing it, only the nodes after the Assembler run again.");
+            reuseRun.ids.add(reuseResponse.prompt_id);
+            reuseRun.queuedAll = true;
+            return reuseResponse;
+        }
     }
     pendingRun = null;
-    lastDoneSignature = null;
+    lastDone = null;
     if (total > CELL_CONFIRM_LIMIT) {
         const ok = window.confirm(`Mykee XYZ Plot: this will queue ${total} prompts (${dims.join(" × ")}). Continue?`);
         if (!ok) throw new Error("Mykee XYZ Plot: queueing cancelled.");
     }
 
     const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    const run = { signature, ids: new Set(), queuedAll: false };
+    const sequence = cellSequence(dims, loopOrder);
+    const run = { full, core, runId, lastCell: sequence[sequence.length - 1], ids: new Set(), queuedAll: false };
     pendingRun = run;
     let response;
-    for (const cell of cellSequence(dims, loopOrder)) {
+    for (const cell of sequence) {
         const output = buildCellOutput(prompt.output, sourceKey, config, cell, dims, runId);
         response = await baseQueuePrompt.call(this, number, { ...prompt, output }, ...rest);
         const hasErrors = response?.node_errors && Object.keys(response.node_errors).length > 0;
@@ -424,10 +487,7 @@ api.queuePrompt = async function (number, prompt, ...rest) {
         run.ids.add(response.prompt_id);
     }
     run.queuedAll = true;
-    if (pendingRun === run && run.ids.size === 0) {
-        lastDoneSignature = signature;
-        pendingRun = null;
-    }
+    if (pendingRun === run && run.ids.size === 0) finishPending();
     return response;
 };
 

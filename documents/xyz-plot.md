@@ -59,8 +59,16 @@ only caches the result of the *last* cell, so a plain re-run would generate
 (nearly) the whole plot again. With this switch on, running again with
 nothing changed (same values, axes, seed and settings anywhere in the
 workflow) queues nothing - the previous result stays and a short "Nothing
-changed" notice is shown. Any change queues the plot as usual. A plot that
-failed or was interrupted never counts as finished. Turn the switch off to
+changed" notice is shown. If only nodes **after the Assembler** changed or
+were added (e.g. you connect a new Save Image to its output), the plot is
+not generated again either: only the last cell is queued, flagged as a
+re-use, and the Assembler hands out the finished plot it still holds in
+memory (the latest two are kept), so just the new nodes run. Any other
+change (a value, an axis, the seed, a node before the Assembler) queues the
+plot as usual. If the finished plot is no longer in memory (e.g. ComfyUI was
+restarted), that re-use run reports an error and the next Run generates the
+plot from scratch. A plot that failed or was interrupted never counts as
+finished. Turn the switch off to
 always generate the whole plot again. (Mykee Seed in "randomize" gets a new
 seed on every Run, so it counts as a change - use "fixed" to reuse a plot.)
 

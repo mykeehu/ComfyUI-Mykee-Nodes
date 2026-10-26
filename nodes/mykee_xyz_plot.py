@@ -74,6 +74,12 @@ MODEL_EXTENSIONS = (
 _MAX_RUNS = 4
 _RUNS = OrderedDict()
 
+# Finished plots (the Assembler's complete outputs + preview), keyed by run
+# id, so a re-run in which only the nodes after the Assembler changed can get
+# the plot again without generating it. Only the latest couple are kept.
+_MAX_FINISHED = 2
+_FINISHED = OrderedDict()
+
 # Wall-clock bookkeeping for the summary printed when a plot is finished.
 # "start" is stamped by the controller node when the run's FIRST cell begins
 # (so generating cell 0 is counted too); the Assembler adds one arrival time
@@ -292,6 +298,9 @@ class MykeeXYZPlot:
             "dims": dims,
             "axes": info_axes,
             "seed": seed,
+            # Set by the frontend when only nodes after the Assembler changed:
+            # the Assembler then hands out the plot it already finished.
+            "reuse": bool(cfg.get("reuse")),
         }
         return (values[0], values[1], values[2], int(seed) if seed is not None else 0, info)
 
@@ -567,6 +576,16 @@ class MykeeXYZPlotAssembler:
 
     def main(self, images, xyz_info, font_size=0, cell_max_size=1024, save_every_plot=False, unique_id=None):
         run_id = xyz_info["run_id"]
+        finished = _FINISHED.get(run_id)
+        if finished is not None:
+            print(f"[Mykee XYZ Plot] Run {run_id}: reusing the finished plot (nothing re-generated).")
+            _FINISHED.move_to_end(run_id)
+            return {"ui": finished["ui"], "result": finished["result"]}
+        if xyz_info.get("reuse"):
+            raise RuntimeError(
+                "[Mykee XYZ Plot] The finished plot is no longer in memory (ComfyUI was restarted?). "
+                "Run again - the plot will be generated from scratch."
+            )
         run = _RUNS.get(run_id)
         if run is None:
             run = {"info": xyz_info, "cells": {}}
@@ -597,10 +616,11 @@ class MykeeXYZPlotAssembler:
 
         _RUNS.pop(run_id, None)  # finished - free the cell images
         self._print_summary(_TIMINGS.pop(run_id, None), total)
-        return {
-            "ui": preview,
-            "result": (_to_tensor([combined]), _to_tensor(blocks), _build_info_text(xyz_info)),
-        }
+        result = (_to_tensor([combined]), _to_tensor(blocks), _build_info_text(xyz_info))
+        _FINISHED[run_id] = {"ui": preview, "result": result}
+        while len(_FINISHED) > _MAX_FINISHED:
+            _FINISHED.popitem(last=False)
+        return {"ui": preview, "result": result}
 
     @staticmethod
     def _print_summary(timing, total):
