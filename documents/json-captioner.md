@@ -16,9 +16,11 @@ with bounding boxes.
  "bbox_coord_space":"abs_centralized","bbox_format":"yxyx"}
 ```
 
-The model only reports each box as normalized 0-1000
-`[y_min, x_min, y_max, x_max]` (the convention of MOSS's own captioning
-prompt). The node scales the boxes to the generation canvas (**width** /
+The model only reports each box in the convention chosen by **coord_mode**
+and **box_order** (default: normalized 0-1000; `[x_min, y_min, x_max, y_max]`
+for Qwen-style clips, `[y_min, x_min, y_max, x_max]` for Gemma 4 - see
+*Inputs*). The node converts whatever it gets to normalized 0-1000 first,
+then scales the boxes to the generation canvas (**width** /
 **height** outputs, multiples of 16) and converts them to centered integer
 `yxyx` with the same arithmetic as MOSS's `compile_prompt.py` - the model
 never calculates the centered numbers. Boxes that are empty or outside the
@@ -127,7 +129,7 @@ What it does on top of a plain Prompt Advanced call:
   of the image, like MOSS does. Keep that mode's JSON schema, otherwise
   parsing fails (the final JSON format itself is always built by the node).
   Placeholders: `{{reference}}`, `{{tags}}`, and in layout mode
-  `{{caption_rule}}`, `{{max_items}}`, `{{tag_rule}}`. In layout mode a
+  `{{caption_rule}}`, `{{max_items}}`, `{{tag_rule}}`, `{{box_schema}}`, `{{box_rule}}`. In layout mode a
   custom prompt always uses 1 call.
 - **canvas_megapixels** - size of the generation canvas for the boxes. 0
   (default) = the image's own size, sides rounded to multiples of 16;
@@ -148,6 +150,37 @@ What it does on top of a plain Prompt Advanced call:
 - **max_length, retries, sampling_mode, seed, temperature, top_k, top_p,
   min_p, repetition_penalty, presence_penalty** - generation controls
   (defaults follow MOSS's captioning setup).
+- **coord_mode** (optional) - layout mode: the scale the model is asked to
+  report boxes in. `normalized_0_1000` (default): relative to the image,
+  what Qwen3-VL / Qwen3.5 / Gemma 4 use. `absolute_pixels`: pixels of the
+  image the model sees, for Qwen2.5-VL style models; the image is snapped
+  to multiples of 32 first so the pixel size given to the model is exact.
+  Adapted from
+  [ComfyUI-MOSS-QwenVL-Layout](https://github.com/leroy989/ComfyUI-MOSS-QwenVL-Layout)
+  by leroy989 (MIT, see `THIRD_PARTY_NOTICES.md`). It does not make boxes
+  more precise on its own: it only has to match what the model actually
+  outputs.
+- **box_order** (optional) - layout mode: the axis order the model is asked
+  to report boxes in. `xyxy` = `[x_min, y_min, x_max, y_max]` is Qwen's
+  native grounding order; `yxyx` = `[y_min, x_min, y_max, x_max]` is the
+  MOSS / Gemini order. `auto` (default): `xyxy` for Qwen-style clips, `yxyx`
+  for Gemma 4; the tag grounding prompt stays `xyxy` and a custom
+  **system_prompt** stays `yxyx` (the order it was written for, unless it
+  uses the `{{box_schema}}` / `{{box_rule}}` placeholders). If boxes in
+  `bbox_preview` look mirrored or swapped, switch to the other order.
+- **item_detail** (optional) - layout mode, built-in prompts: how finely the
+  image is split into items. `units` (default): whole subjects, one person =
+  one item. `parts`: every person or animal also gets separate items for
+  head, hair, torso, arms, hands, legs, feet and clothing, plus all objects
+  and the main background regions, so the items cover most of the image.
+  Raise **max_items** with `parts` (40+). Adapted from the smart mode of
+  [ComfyUI-MOSS-QwenVL-Layout](https://github.com/leroy989/ComfyUI-MOSS-QwenVL-Layout)
+  by leroy989 (MIT). Not used by the tag grounding prompt. A custom
+  **system_prompt** can use the `{{item_scope}}` placeholder.
+- **box_padding** (optional) - layout mode: grows every box by this percent of
+  its own size on each side (clamped to the canvas), applied after the
+  conversion, so `bbox_preview` shows the padded boxes. 0 = off, 2-5% is a
+  good start. Idea from the same node.
 - **pretty_json** - indented JSON instead of one compact line.
 - **unload_after_run** - frees `clip` from VRAM when the batch is done.
 

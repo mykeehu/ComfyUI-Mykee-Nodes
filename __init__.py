@@ -24,6 +24,7 @@ _NODE_MODULES = [
     "mykee_prompt_modifier",
     "mykee_prompt_advanced_ultimate",
     "mykee_json_captioner",
+    "mykee_json_bbox_resizer",
     "mykee_conditioning",
     "mykee_seed",
     "mykee_xyz_plot",

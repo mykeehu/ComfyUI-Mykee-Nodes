@@ -12,9 +12,11 @@ prompt. Two modes:
                         "bbox":[-117,-295,724,82]}, ...],
               "bbox_coord_space":"abs_centralized","bbox_format":"yxyx"}
 
-           The model only reports each box as normalized 0-1000
-           [y_min, x_min, y_max, x_max] (the convention MOSS's own
-           captioning prompt uses). The node converts them to pixels on the
+           The model only reports each box in the convention set by the
+           coord_mode / box_order options (default: normalized 0-1000, xyxy
+           for Qwen-style clips, yxyx - the MOSS convention - for Gemma 4);
+           the node converts them to normalized 0-1000 yxyx first, then to
+           pixels on the
            canvas (width/height outputs, multiples of 16) and then to
            centered yxyx integers with the same arithmetic as MOSS's
            compile_prompt.py - the model never calculates those numbers.
@@ -142,10 +144,10 @@ Here is the original caption reference:
 # {{max_items}}, {{reference}}, {{tags}}, {{ref_rule}}; the "- {{tag_rule}}" line is
 # dropped when no tag list is given.
 _ITEM_RULES = r'''- items[].label: EXACTLY one of "object", "character" or "text" - never a tag or any other word.
-- items: a flat list of the visually coherent units that matter for the composition, at most {{max_items}}. Use "character" for each person or character, "object" for every other distinct subject, animal, prop or notable background element, and "text" for each block of visible text. Group parts that belong together (one person, not separate items for hair and hands). Natural overlap between boxes is allowed. Do not list tiny details.
+- items: a flat list of the visually coherent units that matter for the composition, at most {{max_items}}. Use "character" for each person or character, "object" for every other distinct subject, animal, prop or notable background element, and "text" for each block of visible text. {{item_scope}} Natural overlap between boxes is allowed.
 - items[].caption: the visible appearance of that unit (clothing, colors, material, pose, expression). For a text item: its typography and color. Do not describe its position. {{item_rule}}
 - items[].text: only for "text" items. The exact visible characters, preserved verbatim - do not translate, paraphrase or normalize; write line breaks as \n. Do not include watermarks.
-- items[].box_2d: a tight box around the unit, as normalized 0-1000 [y_min, x_min, y_max, x_max] relative to the full image, where [0, 0] is the top-left corner.
+- items[].box_2d: a tight box around the unit, as {{box_rule}}.
 - {{tag_rule}}
 - {{ref_rule}}
 - Return only the JSON object, without Markdown or explanations.'''
@@ -155,8 +157,8 @@ LAYOUT_PROMPT = r'''You are an image layout annotator for an image-generation mo
 {
   "caption": "a description of the whole image",
   "items": [
-    {"label": "object", "caption": "visible appearance of this unit", "box_2d": [y_min, x_min, y_max, x_max]},
-    {"label": "text", "caption": "typography and color of this text", "text": "the exact visible characters", "box_2d": [y_min, x_min, y_max, x_max]}
+    {"label": "object", "caption": "visible appearance of this unit", "box_2d": {{box_schema}}},
+    {"label": "text", "caption": "typography and color of this text", "text": "the exact visible characters", "box_2d": {{box_schema}}}
   ]
 }
 
@@ -171,8 +173,8 @@ Reference (may be empty): {{reference}}'''
 LAYOUT_ITEMS_PROMPT = r'''You are an image layout annotator for an image-generation model. Look at the image and return exactly one JSON object with this schema:
 {
   "items": [
-    {"label": "object", "caption": "visible appearance of this unit", "box_2d": [y_min, x_min, y_max, x_max]},
-    {"label": "text", "caption": "typography and color of this text", "text": "the exact visible characters", "box_2d": [y_min, x_min, y_max, x_max]}
+    {"label": "object", "caption": "visible appearance of this unit", "box_2d": {{box_schema}}},
+    {"label": "text", "caption": "typography and color of this text", "text": "the exact visible characters", "box_2d": {{box_schema}}}
   ]
 }
 
@@ -182,6 +184,25 @@ Rules:
 
 Image description: {{caption}}
 Reference (may be empty): {{reference}}'''
+
+# item_detail: how finely the image is split into items. "parts" is adapted
+# from the smart mode of ComfyUI-MOSS-QwenVL-Layout by leroy989 (MIT, see
+# THIRD_PARTY_NOTICES.md).
+ITEM_DETAILS = ["units", "parts"]
+_ITEM_SCOPE = {
+    "units": ("Group parts that belong together (one person, not separate items for hair and hands). "
+              "Do not list tiny details."),
+    "parts": ("Split people and animals into parts: first one item for the whole subject, then separate "
+              "items for their visible (or clearly implied but hidden) parts - head/face, hair, torso, each "
+              "arm, each hand, each leg, each foot - and for notable clothing and accessories (top, jacket, "
+              "dress, trousers, shoes, hat, glasses, jewelry, bag). Also list every distinct object, piece "
+              "of furniture, vehicle, food item, plant, prop and handheld item, and the main background and "
+              "scene regions (sky, ground or floor, walls, water, buildings, foliage, windows, doors). "
+              "Together the items should account for most of the image, so nothing important is left "
+              "unlisted. Skip tiny or insignificant details. If you must cut items to fit the limit, keep "
+              "the larger and more important ones, and order them: whole subjects first, then their parts "
+              "and clothing, then objects, then background regions."),
+}
 
 _PALETTE = ((255, 64, 64), (64, 200, 64), (64, 140, 255), (255, 200, 0),
             (255, 0, 255), (0, 220, 220), (255, 128, 0), (170, 110, 255))
@@ -267,6 +288,78 @@ def _is_number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+# ---- box conventions (coord_mode / box_order) --------------------------------
+# The coord_mode option (normalized 0-1000 vs absolute pixels of the input
+# image) and the "absolute pixels" prompt wording are adapted from
+# ComfyUI-MOSS-QwenVL-Layout by leroy989 (MIT) -
+# https://github.com/leroy989/ComfyUI-MOSS-QwenVL-Layout - see
+# THIRD_PARTY_NOTICES.md. Whatever the model returns is converted to
+# normalized 0-1000 [y_min, x_min, y_max, x_max] right after parsing, so the
+# rest of the node (canvas scaling, MOSS centering, preview) is unchanged.
+COORD_MODES = ["normalized_0_1000", "absolute_pixels"]
+BOX_ORDERS = ["auto", "xyxy", "yxyx"]
+
+
+def _box_schema(order):
+    """The box as it is written in the JSON schema of the prompt."""
+    return "[y_min, x_min, y_max, x_max]" if order == "yxyx" else "[x_min, y_min, x_max, y_max]"
+
+
+def _box_rule(order, coord_mode, iw, ih):
+    """Prompt phrase that tells the model the box convention."""
+    if coord_mode == "absolute_pixels":
+        scale = f"absolute pixels {_box_schema(order)} of the input image (which is {iw}x{ih} pixels)"
+    else:
+        scale = f"normalized 0-1000 {_box_schema(order)} relative to the full image"
+    return f"{scale}, where [0, 0] is the top-left corner"
+
+
+def _resolve_order(box_order, auto):
+    """box_order widget -> "xyxy" / "yxyx" ("auto" uses the caller's default)."""
+    return box_order if box_order in ("xyxy", "yxyx") else auto
+
+
+def _is_box(box):
+    return isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box)
+
+
+def _to_norm_box(box, order="yxyx", coord_mode="normalized_0_1000", iw=None, ih=None):
+    """A model box -> [y_min, x_min, y_max, x_max] normalized 0-1000, clamped
+    to the image and ordered; None if it is invalid or empty. `order` is the
+    axis order the model was asked for, `coord_mode` its scale (absolute
+    pixels are divided by the size of the image the model saw: iw x ih)."""
+    if not _is_box(box):
+        return None
+    a, b, c, d = (float(v) for v in box)
+    x0, y0, x1, y1 = (a, b, c, d) if order == "xyxy" else (b, a, d, c)
+    if coord_mode == "absolute_pixels":
+        if not (iw and ih):
+            return None
+        x0, x1 = x0 / iw * 1000.0, x1 / iw * 1000.0
+        y0, y1 = y0 / ih * 1000.0, y1 / ih * 1000.0
+    x0, y0, x1, y1 = (min(1000.0, max(0.0, v)) for v in (x0, y0, x1, y1))
+    x0, x1 = sorted((x0, x1))
+    y0, y1 = sorted((y0, y1))
+    if x1 - x0 < 1 or y1 - y0 < 1:
+        return None
+    return [y0, x0, y1, x1]
+
+
+def _snap_image32(img):
+    """Resize an NHWC image to sides that are multiples of 32 (what ComfyUI
+    feeds the vision tower anyway), so the pixel size told to the model in
+    absolute_pixels mode is exactly the size it sees."""
+    if F is None:
+        return img
+    _, h, w, _ = img.shape
+    new_h, new_w = max(32, round(h / 32) * 32), max(32, round(w / 32) * 32)
+    if (new_h, new_w) == (h, w):
+        return img
+    nchw = img.permute(0, 3, 1, 2)
+    nchw = F.interpolate(nchw, size=(new_h, new_w), mode="bilinear", align_corners=False)
+    return nchw.permute(0, 2, 3, 1).contiguous()
+
+
 def _extract_json_object(raw):
     """Pull the first JSON object out of a model answer. Returns
     (dict, None) or (None, error)."""
@@ -340,10 +433,12 @@ def _normalize_label(label):
     return "object"
 
 
-def parse_layout_json(raw, max_items, need_caption=True):
+def parse_layout_json(raw, max_items, need_caption=True, order="yxyx",
+                      coord_mode="normalized_0_1000", iw=None, ih=None):
     """Validate the layout answer. Returns ({"caption", "items"}, None) with
     each item carrying its normalized box as "_box" [y0, x0, y1, x1], or
-    (None, error)."""
+    (None, error). `order`/`coord_mode`/`iw`/`ih`: the box convention the
+    model was asked to use (see _to_norm_box)."""
     data, error = _extract_json_object(raw)
     if error:
         return None, error
@@ -367,15 +462,14 @@ def parse_layout_json(raw, max_items, need_caption=True):
         if not isinstance(cap, str) or not cap.strip():
             return None, f"{where}.caption must be a non-empty string"
         box = item.get("box_2d", item.get("bbox_2d", item.get("bbox")))
-        if not (isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box)):
-            return None, f"{where}.box_2d must be four numbers [y_min, x_min, y_max, x_max]"
-        y0, x0, y1, x1 = (min(1000.0, max(0.0, float(v))) for v in box)
-        y0, y1 = sorted((y0, y1))
-        x0, x1 = sorted((x0, x1))
-        if y1 - y0 < 1 or x1 - x0 < 1:
+        if not _is_box(box):
+            return None, f"{where}.box_2d must be four numbers {_box_schema(order)}"
+        norm = _to_norm_box(box, order, coord_mode, iw, ih)
+        if norm is None:
             # a degenerate box is dropped, it does not sink the whole answer
             print(f"Mykee JSON Captioner: {where} dropped - empty or out-of-image box")
             continue
+        y0, x0, y1, x1 = norm
         entry = {"label": label, "caption": cap.strip()}
         text = item.get("text")
         if label == "text" and not (isinstance(text, str) and text.strip()):
@@ -408,12 +502,18 @@ def _centered_box(x1, y1, x2, y2, width, height):
     return result
 
 
-def compile_layout(draft, width, height):
+def compile_layout(draft, width, height, pad_pct=0.0):
     """Draft (normalized boxes) -> MOSS Layout dict with abs_centralized /
-    yxyx boxes. Returns (obj, error)."""
+    yxyx boxes. `pad_pct` grows every box by that percent of its own size on
+    each side (clamped to the canvas; idea from ComfyUI-MOSS-QwenVL-Layout by
+    leroy989, MIT). Returns (obj, error)."""
     items = []
     for n, item in enumerate(draft["items"]):
         y0, x0, y1, x1 = item["_box"]
+        if pad_pct and pad_pct > 0:
+            py, px = (y1 - y0) * pad_pct / 100.0, (x1 - x0) * pad_pct / 100.0
+            y0, y1 = max(0.0, y0 - py), min(1000.0, y1 + py)
+            x0, x1 = max(0.0, x0 - px), min(1000.0, x1 + px)
         try:
             bbox = _centered_box(x0 / 1000.0 * width, y0 / 1000.0 * height,
                                  x1 / 1000.0 * width, y1 / 1000.0 * height, width, height)
@@ -709,18 +809,20 @@ def _build_caption_prompt(base, reference, tags, reference_mode, explicit, scan=
 
 
 def _build_tag_prompt(tags, tag_mode, caption_text, caption_rule, reference, max_items, ref_rule,
-                      scene_rule, item_rule):
+                      scene_rule, item_rule, order="xyxy", coord_mode="normalized_0_1000",
+                      iw=None, ih=None):
     """Dedicated grounding prompt for a tag list. The model must answer for
     EVERY listed tag (empty `instances` when it is not visible), which keeps
-    it from drifting back to its own idea of what to box. Boxes use the
-    native Qwen grounding order [x_min, y_min, x_max, y_max], 0-1000."""
+    it from drifting back to its own idea of what to box. Boxes default to
+    the native Qwen grounding order [x_min, y_min, x_max, y_max], 0-1000."""
     joined = ", ".join(tags)
+    schema = _box_schema(order)
     caption_field = '"caption": "a description of the whole image",\n  ' if caption_text is None else ""
     extra_schema = ""
     extra_rule = ""
     if tag_mode == "hint":
         extra_schema = (',\n  "extra_items": [{"label": "object", "caption": "visible appearance", '
-                        '"bbox_2d": [x_min, y_min, x_max, y_max]}]')
+                        f'"bbox_2d": {schema}}}]')
         extra_rule = (f'- extra_items: other visually important units that are NOT in the tag list, '
                       f'at most {max_items}; "label" is EXACTLY "object", "character" or "text" '
                       '(a "text" item also needs "text" with the exact visible characters). '
@@ -739,15 +841,14 @@ def _build_tag_prompt(tags, tag_mode, caption_text, caption_rule, reference, max
         "Return exactly one JSON object:\n"
         "{\n  " + caption_field + '"tags": [\n'
         '    {"tag": "<the tag exactly as given>", "instances": [\n'
-        '      {"caption": "visible appearance of this instance", "bbox_2d": [x_min, y_min, x_max, y_max]}\n'
+        f'      {{"caption": "visible appearance of this instance", "bbox_2d": {schema}}}\n'
         "    ]}\n  ]" + extra_schema + "\n}\n\n"
         "Rules:\n"
         '- Exactly one entry in "tags" per given tag, with the same spelling and in the same order. '
         'Use an empty "instances" list when the tag is not visible, or is not a thing that can be boxed '
         '(a mood, a style, or an attribute such as "naked" or "smiling"). Never guess and never invent a box.\n'
         '- Several separate instances of one tag (for example two people) are several entries in "instances".\n'
-        "- bbox_2d: a tight box around that instance, normalized 0-1000 relative to the full image, in the "
-        "order x_min, y_min, x_max, y_max, where [0, 0] is the top-left corner.\n"
+        f"- bbox_2d: a tight box around that instance, as {_box_rule(order, coord_mode, iw, ih)}.\n"
         "- instance caption: the visible appearance of that instance (colors, material, pose). "
         "Do not describe its position. " + item_rule + "\n"
         + caption_rule_line + extra_rule +
@@ -757,20 +858,8 @@ def _build_tag_prompt(tags, tag_mode, caption_text, caption_rule, reference, max
     )
 
 
-def _norm_box_xyxy(box):
-    """[x_min, y_min, x_max, y_max] (0-1000) -> [y_min, x_min, y_max, x_max]
-    clamped and ordered, or None if it is invalid / empty."""
-    if not (isinstance(box, list) and len(box) == 4 and all(_is_number(v) for v in box)):
-        return None
-    x0, y0, x1, y1 = (min(1000.0, max(0.0, float(v))) for v in box)
-    x0, x1 = sorted((x0, x1))
-    y0, y1 = sorted((y0, y1))
-    if x1 - x0 < 1 or y1 - y0 < 1:
-        return None
-    return [y0, x0, y1, x1]
-
-
-def parse_tag_json(raw, tags, max_items, need_caption, allow_extra):
+def parse_tag_json(raw, tags, max_items, need_caption, allow_extra, order="xyxy",
+                   coord_mode="normalized_0_1000", iw=None, ih=None):
     """Validate the tag grounding answer. Returns ({"caption", "items"}, None)
     like parse_layout_json, or (None, error). Tags the model reports as not
     visible are only logged."""
@@ -798,7 +887,7 @@ def parse_tag_json(raw, tags, max_items, need_caption, allow_extra):
         for inst in entry.get("instances") or []:
             if not isinstance(inst, dict):
                 continue
-            box = _norm_box_xyxy(inst.get("bbox_2d", inst.get("box_2d")))
+            box = _to_norm_box(inst.get("bbox_2d", inst.get("box_2d")), order, coord_mode, iw, ih)
             if box is None:
                 continue
             cap = inst.get("caption")
@@ -817,7 +906,7 @@ def parse_tag_json(raw, tags, max_items, need_caption, allow_extra):
         for extra in data["extra_items"][:max(1, int(max_items))]:
             if not isinstance(extra, dict):
                 continue
-            box = _norm_box_xyxy(extra.get("bbox_2d", extra.get("box_2d")))
+            box = _to_norm_box(extra.get("bbox_2d", extra.get("box_2d")), order, coord_mode, iw, ih)
             cap = extra.get("caption")
             if box is None or not isinstance(cap, str) or not cap.strip():
                 continue
@@ -1103,6 +1192,51 @@ class MykeeJsonCaptioner:
                     "default": 1024, "min": 0, "max": 16384, "step": 64,
                     "tooltip": THINKING_BUDGET_TOOLTIP,
                 }),
+                "coord_mode": (COORD_MODES, {
+                    "default": "normalized_0_1000",
+                    "tooltip": "Layout mode: the scale the model is asked to "
+                               "report boxes in. normalized_0_1000: relative "
+                               "to the image (Qwen3-VL / Qwen3.5 / Gemma 4). "
+                               "absolute_pixels: pixels of the image the "
+                               "model sees (Qwen2.5-VL style models); the "
+                               "image is snapped to multiples of 32 so the "
+                               "size told to the model is exact. Adapted "
+                               "from ComfyUI-MOSS-QwenVL-Layout by leroy989.",
+                }),
+                "box_order": (BOX_ORDERS, {
+                    "default": "auto",
+                    "tooltip": "Layout mode: the axis order the model is "
+                               "asked to report boxes in. xyxy = [x_min, "
+                               "y_min, x_max, y_max] is Qwen's native "
+                               "grounding order; yxyx = [y_min, x_min, "
+                               "y_max, x_max] is the MOSS / Gemini order. "
+                               "auto: xyxy for Qwen-style clips, yxyx for "
+                               "Gemma 4 and for a custom system_prompt "
+                               "(written for yxyx unless you use "
+                               "{{box_schema}}). If boxes look mirrored or "
+                               "swapped in bbox_preview, try the other one.",
+                }),
+                "item_detail": (ITEM_DETAILS, {
+                    "default": "units",
+                    "tooltip": "Layout mode (built-in prompts): how finely the "
+                               "image is split into items. units: whole "
+                               "subjects (one person = one item). parts: each "
+                               "person also gets separate items for head, "
+                               "hair, torso, arms, hands, legs, feet and "
+                               "clothing, plus all objects and background "
+                               "regions - a more complete map of the image. "
+                               "Use a higher max_items with parts (40+). "
+                               "Adapted from the smart mode of "
+                               "ComfyUI-MOSS-QwenVL-Layout by leroy989.",
+                }),
+                "box_padding": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 25.0, "step": 0.5,
+                    "tooltip": "Layout mode: grow every box by this percent "
+                               "of its own size on each side (clamped to the "
+                               "canvas). 2-5% is a good start if the boxes "
+                               "are a bit tight. Idea from "
+                               "ComfyUI-MOSS-QwenVL-Layout by leroy989.",
+                }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
         }
@@ -1163,7 +1297,9 @@ class MykeeJsonCaptioner:
             tag_mode, tags_to_prompt, separate_caption, system_prompt, canvas_megapixels, max_items,
             image_megapixels, thinking, max_length, retries, sampling_mode, seed,
             temperature, top_k, top_p, min_p, repetition_penalty, presence_penalty,
-            pretty_json, unload_after_run, template_mode="auto", thinking_budget=1024, node_id=None):
+            pretty_json, unload_after_run, template_mode="auto", thinking_budget=1024,
+            coord_mode="normalized_0_1000", box_order="auto", item_detail="units", box_padding=0.0,
+            node_id=None):
         max_items = int(max_items) if max_items and int(max_items) > 0 else 60
         ref = reference.strip() if reference and reference.strip() else "(none)"
         custom = system_prompt if system_prompt and system_prompt.strip() else None
@@ -1175,7 +1311,7 @@ class MykeeJsonCaptioner:
         tag_rule = _tag_rule(tags, tag_mode)
         tags_suffix = ("\n\nTags: " + ", ".join(tags)) if (tags_to_prompt and tags) else ""
         scene_rule, item_rule = _scene_rule(explicit_detail), _item_rule(explicit_detail)
-        ctx = {"scan": ""}  # the explicit-content scan of the current image
+        ctx = {"scan": "", "iw": None, "ih": None}  # scan + model-visible image size of the current image
 
         def cur_ref():
             """The reference text of the current image, scan included."""
@@ -1191,7 +1327,10 @@ class MykeeJsonCaptioner:
             ref_rule = cur_rule()
             values = {"reference": cur_ref(), "tags": ", ".join(tags) or "(none)", "tag_rule": tag_rule,
                       "caption_rule": _LENGTH_RULES[caption_length], "max_items": str(int(max_items)),
-                      "ref_rule": ref_rule, "scene_rule": scene_rule, "item_rule": item_rule}
+                      "ref_rule": ref_rule, "scene_rule": scene_rule, "item_rule": item_rule,
+                      "item_scope": _ITEM_SCOPE.get(item_detail, _ITEM_SCOPE["units"]),
+                      "box_schema": _box_schema(order),
+                      "box_rule": _box_rule(order, coord_mode, ctx["iw"], ctx["ih"])}
             values.update(extra)
             for key, value in values.items():
                 template = template.replace("{{%s}}" % key, value)
@@ -1203,6 +1342,20 @@ class MykeeJsonCaptioner:
             print(f"Mykee JSON Captioner: tag list ({tag_mode}, "
                   f"{'dedicated grounding prompt' if use_tags else 'custom system_prompt'}): {tags}")
 
+        # Box convention the model is asked for. "auto" keeps each prompt's
+        # native default: the tag prompt xyxy (as before), a custom prompt
+        # yxyx (what it was written for), the built-in layout prompts xyxy
+        # for Qwen-style clips and yxyx for Gemma 4.
+        if use_tags:
+            auto_order = "xyxy"
+        elif mode == "layout" and custom is not None and not two_calls:
+            auto_order = "yxyx"
+        else:
+            auto_order = "yxyx" if is_gemma4(clip) else "xyxy"
+        order = _resolve_order(box_order, auto_order)
+        if mode == "layout":
+            print(f"Mykee JSON Captioner: boxes requested as {order}, {coord_mode}")
+
         def finish(prompt):
             """Built-in prompts end with the explicit-content reminder (the
             last instruction the model reads is the one it follows best)."""
@@ -1210,7 +1363,8 @@ class MykeeJsonCaptioner:
 
         def tag_prompt(caption_text):
             return finish(_build_tag_prompt(tags, tag_mode, caption_text, _LENGTH_RULES[caption_length],
-                                            cur_ref(), int(max_items), cur_rule(), scene_rule, item_rule))
+                                            cur_ref(), int(max_items), cur_rule(), scene_rule, item_rule,
+                                            order, coord_mode, ctx["iw"], ctx["ih"]))
 
         def caption_prompt():
             if custom:
@@ -1240,6 +1394,9 @@ class MykeeJsonCaptioner:
         for i in range(count):
             canvas_w, canvas_h = _canvas_size(image.shape[1], image.shape[2], canvas_megapixels)
             img = _fit_image(image[i:i + 1], image_megapixels)
+            if mode == "layout" and coord_mode == "absolute_pixels":
+                img = _snap_image32(img)  # the pixel size told to the model must be exact
+            ctx["iw"], ctx["ih"] = int(img.shape[2]), int(img.shape[1])
             seed_i = int(seed) + i
             ctx["scan"] = ""
             # detailed: the detailed prompt is self-sufficient, no scan call.
@@ -1282,17 +1439,20 @@ class MykeeJsonCaptioner:
                                    fill(custom) if custom else finish(fill(LAYOUT_PROMPT)))
 
                 if error is None:
-                    def parse_fn(raw_, cw=canvas_w, ch=canvas_h, ct=caption_text):
+                    def parse_fn(raw_, cw=canvas_w, ch=canvas_h, ct=caption_text,
+                                 iw_=ctx["iw"], ih_=ctx["ih"]):
                         if use_tags:
                             draft, err = parse_tag_json(raw_, tags, max_items, ct is None,
-                                                        tag_mode == "hint")
+                                                        tag_mode == "hint", order, coord_mode, iw_, ih_)
                         else:
-                            draft, err = parse_layout_json(raw_, max_items, need_caption=ct is None)
+                            draft, err = parse_layout_json(raw_, max_items, need_caption=ct is None,
+                                                           order=order, coord_mode=coord_mode,
+                                                           iw=iw_, ih=ih_)
                         if err:
                             return None, err
                         if ct is not None:
                             draft["caption"] = ct
-                        return compile_layout(draft, cw, ch)
+                        return compile_layout(draft, cw, ch, box_padding)
                     obj, error, raw = self._generate_json(
                         clip, img, prompt_text, parse_fn, seed=seed_i + (104729 if two_calls else 0), **gen)
                 if obj is not None:
