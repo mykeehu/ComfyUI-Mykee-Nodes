@@ -630,6 +630,52 @@ class MykeeFaceDetectAlignCrop:
                         ),
                     },
                 ),
+                "context_rotate": (
+                    ["off", "level_eyes"],
+                    {
+                        "default": "off",
+                        "tooltip": (
+                            "'off': context_crop is an axis-aligned crop (the head's tilt is "
+                            "kept). 'level_eyes': context_crop is rotated around the face center "
+                            "so the line between the eyes is horizontal (upright face). "
+                            "crop_factor, mask_offset_* and edge_fill work as before; "
+                            "context_crop_face_mask follows the rotation (it becomes an upright "
+                            "rectangle). The edge_fill strip may also appear at the corners. "
+                            "face_mask (original image coordinates) is unaffected."
+                        ),
+                    },
+                ),
+                "context_frame": (
+                    ["bbox", "landmarks"],
+                    {
+                        "default": "bbox",
+                        "tooltip": (
+                            "How context_crop's window is centered and sized. 'bbox': from YuNet's "
+                            "bbox (as before) - NOTE that YuNet's bbox runs roughly from the "
+                            "eyebrows to the chin, so its center sits low (around the nose/mouth) "
+                            "and the crop tends to cut off the eyes/forehead/hair. 'landmarks': "
+                            "centered and sized from the eye/mouth landmarks, the same way the "
+                            "FFHQ crop does it (much steadier). In this mode crop_factor=2.0 gives "
+                            "the same window size as ffhq_crop, 1.0 is half of that (a tight face "
+                            "crop). mask_offset_* still shifts the window; the masks keep "
+                            "following the detected face box."
+                        ),
+                    },
+                ),
+                "ffhq_crop_scale": (
+                    "FLOAT",
+                    {
+                        "default": 1.0, "min": 0.5, "max": 3.0, "step": 0.05,
+                        "tooltip": (
+                            "Zoom for ffhq_crop around the standard FFHQ framing. 1.0 = the "
+                            "exact FFHQ recipe (what stylegan2-ffhq-*.pkl was trained on). "
+                            "Values above 1.0 zoom OUT (more hair/shoulders/background - use "
+                            "this if the top of the hair gets cut off, e.g. 1.2-1.4); values "
+                            "below 1.0 zoom IN. Anything other than 1.0 deviates from the "
+                            "training framing, so StyleGAN projection may be a bit less faithful."
+                        ),
+                    },
+                ),
             }
         }
 
@@ -638,7 +684,7 @@ class MykeeFaceDetectAlignCrop:
     FUNCTION = "run"
     CATEGORY = "Mykee/Character"
 
-    def run(self, image, model_file, crop_factor, crop_size, which_face, mask_feather, score_threshold, edge_fill, min_face_size_pct, mask_offset_x_pct, mask_offset_y_pct, mask_grow_pct, ffhq_crop_size, face_index=0):
+    def run(self, image, model_file, crop_factor, crop_size, which_face, mask_feather, score_threshold, edge_fill, min_face_size_pct, mask_offset_x_pct, mask_offset_y_pct, mask_grow_pct, ffhq_crop_size, face_index=0, ffhq_crop_scale=1.0, context_rotate="off", context_frame="bbox"):
         _require_cv2()
         model_path = _resolve_model_path(model_file)
         if not os.path.isfile(model_path):
@@ -681,8 +727,28 @@ class MykeeFaceDetectAlignCrop:
         # the crop, the same way the raw bbox center originally was.
         mask_offset_x = fw * (mask_offset_x_pct / 100.0)
         mask_offset_y = fh * (mask_offset_y_pct / 100.0)
-        cx, cy = x + fw / 2.0 + mask_offset_x, y + fh / 2.0 + mask_offset_y
+        # mx/my = the (offset-corrected) detected-box center - the masks are
+        # always built around THIS point. cx/cy = the crop window's center,
+        # which is the same point in 'bbox' mode.
+        mx, my = x + fw / 2.0 + mask_offset_x, y + fh / 2.0 + mask_offset_y
+        cx, cy = mx, my
         side = int(round(max(fw, fh) * crop_factor))
+        if context_frame == "landmarks":
+            # Same geometry as _ffhq_align_crop: window centered slightly
+            # below the eye midpoint, sized from the eye distance / eye-mouth
+            # distance. YuNet's bbox runs ~eyebrows->chin, so its center sits
+            # near the nose and is a poor anchor for a head-sized window.
+            eye_r = np.array([face[4], face[5]], dtype=np.float64)
+            eye_l = np.array([face[6], face[7]], dtype=np.float64)
+            mouth_mid = np.array([(face[10] + face[12]) * 0.5, (face[11] + face[13]) * 0.5], dtype=np.float64)
+            eye_mid = (eye_r + eye_l) * 0.5
+            e2e = float(np.hypot(*(eye_l - eye_r)))
+            e2m = float(np.hypot(*(mouth_mid - eye_mid)))
+            if e2e > 1e-3 and e2m > 1e-3:
+                c_lm = eye_mid + (mouth_mid - eye_mid) * 0.1
+                cx = float(c_lm[0]) + mask_offset_x
+                cy = float(c_lm[1]) + mask_offset_y
+                side = int(round(max(e2e * 2.0, e2m * 1.8) * crop_factor))
         side = max(side, 2)
         x0 = int(round(cx - side / 2.0))
         y0 = int(round(cy - side / 2.0))
@@ -713,13 +779,37 @@ class MykeeFaceDetectAlignCrop:
         scale = crop_size / float(side)
         context = cv2.resize(context, (crop_size, crop_size), interpolation=cv2.INTER_LANCZOS4)
 
+        # --- optional: rotate context_crop so the eyes are level ---
+        # One warpAffine straight from the original image (rotate around the
+        # same offset-corrected center + scale to crop_size), instead of
+        # rotating the already-resized crop (which would lose the corners).
+        # cv2's positive angle = counter-clockwise; the eye line's image
+        # angle is clockwise-positive (y points down), so the same number
+        # levels the eyes.
+        context_rotated = False
+        if context_rotate == "level_eyes":
+            lvl = float(np.degrees(np.arctan2(float(face[7]) - float(face[5]), float(face[6]) - float(face[4]))))
+            if lvl > 90.0:
+                lvl -= 180.0
+            elif lvl < -90.0:
+                lvl += 180.0
+            rot_m = cv2.getRotationMatrix2D((cx, cy), lvl, scale)
+            rot_m[0, 2] += crop_size / 2.0 - cx
+            rot_m[1, 2] += crop_size / 2.0 - cy
+            border_type, border_value = _edge_fill_cv2_params(edge_fill)
+            context = cv2.warpAffine(
+                bgr, rot_m, (crop_size, crop_size), flags=cv2.INTER_LANCZOS4,
+                borderMode=border_type, borderValue=border_value if border_value is not None else 0,
+            )
+            context_rotated = True
+
         # --- FFHQ-style aligned crop (the actual preprocessing recipe
         # stylegan2-ffhq-*.pkl generators were trained on) - eye/mouth-
         # based rotation+crop, not a plain resize. Falls back to a resized
         # context_crop on the rare degenerate-landmark case (see
         # _ffhq_align_crop's docstring) rather than failing the whole node
         # over one output.
-        ffhq_bgr = self._ffhq_align_crop(bgr, face, ffhq_crop_size, edge_fill)
+        ffhq_bgr = self._ffhq_align_crop(bgr, face, ffhq_crop_size, edge_fill, ffhq_crop_scale)
         if ffhq_bgr is None:
             ffhq_bgr = cv2.resize(context, (ffhq_crop_size, ffhq_crop_size), interpolation=cv2.INTER_LANCZOS4)
 
@@ -771,19 +861,28 @@ class MykeeFaceDetectAlignCrop:
         # actual center when offset != 0 - not somewhere drifted apart
         # from where context_crop's content actually sits).
         crop_mask = np.zeros((crop_size, crop_size), dtype=np.uint8)
-        local_x = (x + pad_left - x0) * scale
-        local_y = (y + pad_top - y0) * scale
         local_w = fw * scale
         local_h = fh * scale
-        local_mask_cx = local_x + local_w / 2.0 + mask_offset_x * scale
-        local_mask_cy = local_y + local_h / 2.0 + mask_offset_y * scale
+        local_mask_cx = (mx + pad_left - x0) * scale
+        local_mask_cy = (my + pad_top - y0) * scale
         local_mask_w = local_w * grow_factor
         local_mask_h = local_h * grow_factor
-        crop_rect = (
-            (local_mask_cx, local_mask_cy),
-            (local_mask_w, local_mask_h),
-            angle_deg,
-        )
+        if context_rotated:
+            # the crop is levelled, so the mask is an upright rectangle at
+            # the detected-box center mapped through the same rotation
+            rcx = float(rot_m[0, 0] * mx + rot_m[0, 1] * my + rot_m[0, 2])
+            rcy = float(rot_m[1, 0] * mx + rot_m[1, 1] * my + rot_m[1, 2])
+            crop_rect = (
+                (rcx, rcy),
+                (local_mask_w, local_mask_h),
+                0.0,
+            )
+        else:
+            crop_rect = (
+                (local_mask_cx, local_mask_cy),
+                (local_mask_w, local_mask_h),
+                angle_deg,
+            )
         crop_pts = cv2.boxPoints(crop_rect).astype(np.int32)
         cv2.fillPoly(crop_mask, [crop_pts], 255)
         if mask_feather > 0:
@@ -841,7 +940,7 @@ class MykeeFaceDetectAlignCrop:
         return cv2.warpAffine(bgr, m, (112, 112), borderValue=0.0)
 
     @staticmethod
-    def _ffhq_align_crop(bgr, face_row, output_size, edge_fill):
+    def _ffhq_align_crop(bgr, face_row, output_size, edge_fill, scale=1.0):
         """Reimplements NVIDIA's official FFHQ dataset alignment recipe
         (NVlabs/ffhq-dataset's recreate_aligned_images / the widely-mirrored
         align_images.py), the exact preprocessing used to build the FFHQ
@@ -891,7 +990,7 @@ class MykeeFaceDetectAlignCrop:
         if x_len < 1e-3:
             return None
         x /= x_len
-        x *= max(eye_to_eye_len * 2.0, eye_to_mouth_len * 1.8)
+        x *= max(eye_to_eye_len * 2.0, eye_to_mouth_len * 1.8) * max(0.1, float(scale))
         y = np.flipud(x) * np.array([-1, 1])
         c = eye_avg + eye_to_mouth * 0.1
         # PIL QUAD order: upper-left, lower-left, lower-right, upper-right.
