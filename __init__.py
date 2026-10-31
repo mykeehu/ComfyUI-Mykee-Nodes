@@ -32,6 +32,7 @@ _NODE_MODULES = [
     "mykee_text_switch",
     "mykee_text_injection",
     "mykee_size_switch",
+    "mykee_wh_resizer",
 ]
 
 NODE_CLASS_MAPPINGS = {}

@@ -87,6 +87,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Image Switch](documents/image-switch.md) | 2-input image switch with real passthrough when a branch is inactive. |
 | [Mykee Image Switch (Advanced)](documents/image-switch-advanced.md) | Image switch/batch with any number of inputs. |
 | [Mykee Size Switch/Batch](documents/size-switch-batch.md) | Up to 32 width/height pairs with switch or batch output. |
+| [Mykee Width/Height Resizer](documents/width-height-resizer.md) | Scales a width/height pair by a factor or to a target size, with 8/16/32/64 rounding. |
 | [Mykee Switch Conditioning](documents/switch-conditioning.md) | Forgiving conditioning switch (rework of Crystools' node). |
 | [Mykee Stripe Remover](documents/stripe-remover.md) | Removes faint periodic stripes from images (DiT banding). |
 | [Mykee Latent Nyquist Notch](documents/latent-nyquist-notch.md) | Removes the 2-latent-pixel pattern from a LATENT before VAE decode. |
