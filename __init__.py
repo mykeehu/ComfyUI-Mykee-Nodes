@@ -7,6 +7,7 @@ _NODE_MODULES = [
     "mykee_counter",
     "mykee_mask",
     "mykee_character",
+    "mykee_face_refine",
     "mykee_group_bypasser",
     "mykee_audio",
     "mykee_prosody",

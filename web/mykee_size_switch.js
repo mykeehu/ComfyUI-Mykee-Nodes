@@ -76,6 +76,7 @@ function writeState(node, state) {
     const w = widget(node, CONFIG_WIDGET);
     if (!w) return;
     w.value = JSON.stringify({ checked: state.checked, selected: state.selected, driver: state.driver });
+    node._mykeeCfg = w.value; // our own change: the caller refreshes the toggles itself
 }
 
 // The pair numbers that actually go out.
@@ -169,6 +170,13 @@ function applyStep(node) {
             w.options = w.options || {};
             w.options.step2 = step;
             w.options.step = step * 10;
+            // The frontend rounds typed / stepped values to (value - min % step)
+            // steps, i.e. with an offset when min is not a multiple of the step:
+            // min 16 with a step of 32 gives 16, 48, 80 ... so every arrow click
+            // was rounded to an off-grid number and then snapped back by us
+            // (stuck at 3136). A min that is a multiple of the step removes the
+            // offset (this is also the lowest value snap() allows).
+            w.options.min = Math.max(MIN_SIZE, divisor(node));
         }
     }
 }
@@ -400,6 +408,33 @@ function refreshAll(node) {
     for (let i = 1; i <= MAX_PAIRS; i++) rememberPair(node, i);
     refreshToggles(node);
     fitHeight(node);
+    node._mykeeSig = layoutSignature(node);
+    node._mykeeCfg = widget(node, CONFIG_WIDGET)?.value ?? "";
+}
+
+// What the visible layout depends on.
+function layoutSignature(node) {
+    return [pairCount(node), isBatch(node) ? 1 : 0, divisor(node)].join("|");
+}
+
+// Self-healing: some ways of rebuilding a node (e.g. a "Reload node" menu item
+// of an extension) copy the widget values into a fresh node WITHOUT calling any
+// widget callback or onConfigure, so pair_count showed 8 while only one pair was
+// built. Whenever the widget values and the built layout disagree, rebuild.
+function ensureSynced(node) {
+    if (!node._mykeeReady || node._mykeeSyncPending) return;
+    const cfg = widget(node, CONFIG_WIDGET)?.value ?? "";
+    if (layoutSignature(node) === node._mykeeSig && cfg === node._mykeeCfg) return;
+    node._mykeeSyncPending = true;
+    setTimeout(() => {
+        node._mykeeSyncPending = false;
+        if (layoutSignature(node) !== node._mykeeSig) refreshAll(node);
+        else {
+            node._mykeeCfg = widget(node, CONFIG_WIDGET)?.value ?? "";
+            refreshToggles(node);
+            node.graph?.setDirtyCanvas?.(true, true);
+        }
+    }, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -541,6 +576,7 @@ function setupNode(node) {
     node.mykeeSizeRefresh = () => refreshAll(node);
     node.setSize([Math.max(node.size[0], MIN_NODE_WIDTH), node.size[1]]);
     refreshAll(node);
+    node._mykeeReady = true;
     // ComfyUI may still apply its own size after onNodeCreated - fit again.
     setTimeout(() => fitHeight(node), 0);
 }
@@ -579,9 +615,18 @@ app.registerExtension({
             return ret;
         };
 
+        const onAdded = nodeType.prototype.onAdded;
+        nodeType.prototype.onAdded = function () {
+            const ret = onAdded?.apply(this, arguments);
+            // Values may be copied in right after the node is added (reload).
+            for (const delay of [0, 100, 500]) setTimeout(() => ensureSynced(this), delay);
+            return ret;
+        };
+
         const onDrawForeground = nodeType.prototype.onDrawForeground;
         nodeType.prototype.onDrawForeground = function () {
             const ret = onDrawForeground?.apply(this, arguments);
+            ensureSynced(this);
             updateButtonCursor(this);
             return ret;
         };

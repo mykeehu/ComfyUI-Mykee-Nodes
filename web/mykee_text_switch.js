@@ -106,6 +106,17 @@ function resolveConfig(node) {
 // Input sockets: keep text_1..text_count
 // ---------------------------------------------------------------------------
 
+// The hidden texts_config widget gets its own (invisible) widget socket in
+// newer frontends. It sits at the top of the node, exactly where text_1 is, so
+// a link dropped on text_1 could land on it and replace the node's config.
+// The socket is never needed, so it is removed (and any link on it cut).
+function dropConfigSocket(node) {
+    const idx = node.inputs?.findIndex((inp) => inp.name === CONFIG_WIDGET) ?? -1;
+    if (idx < 0) return;
+    if (node.inputs[idx].link != null) node.disconnectInput?.(idx);
+    node.removeInput(idx);
+}
+
 function syncSockets(node) {
     const count = textCount(node);
     for (let idx = (node.inputs?.length ?? 0) - 1; idx >= 0; idx--) {
@@ -285,6 +296,7 @@ function setupNode(node) {
         };
     }
 
+    dropConfigSocket(node);
     syncSockets(node);
     node.setSize([Math.max(node.size[0], 340), node.size[1]]);
     render();
@@ -310,6 +322,7 @@ app.registerExtension({
             // Widget values and links are restored by now (links of other
             // nodes may still be loading, hence the small delay).
             setTimeout(() => {
+                dropConfigSocket(this);
                 syncSockets(this);
                 this.mykeeTextRender?.();
             }, 50);

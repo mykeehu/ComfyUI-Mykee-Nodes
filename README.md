@@ -53,6 +53,19 @@ Overview, models and pipeline integration: [Mykee/Character - character-consiste
 | [Mykee Identity Compare (Multi-Person)](documents/identity-compare-multi-person.md) | All-in-one identity check of a generated image against several references. |
 | [Mykee Character Reference Pack](documents/character-reference-pack.md) | Builds a reference image batch and prompt prefix for up to 9 references. |
 
+### Face refine
+
+Model-agnostic face detailer for images and videos (also for latents a normal
+VAE Encode cannot handle, like MiniMax H3's). Overview, recipes and tips:
+[Face refine overview](documents/face-refine.md)
+
+| Node | Description |
+|---|---|
+| [Mykee Face Tracks (detect + crop)](documents/face-tracks.md) | Finds and follows faces, identifies them against reference images, outputs levelled crops (all people, one aligned list) plus their reference faces. |
+| [Mykee H3 Face Latent](documents/h3-face-latent.md) | MiniMax H3 only: turns face crops into H3 video+audio latents. |
+| [Mykee Face Paste (blend back)](documents/face-paste.md) | Blends refined crops back with a soft mask, colour match and an identity guard. |
+| [Mykee Image Batch To List](documents/image-batch-to-list.md) | Runs the nodes after it once per image (needed when the crop goes into an edit model's conditioning). |
+
 ### Audio
 
 | Node | Description |
