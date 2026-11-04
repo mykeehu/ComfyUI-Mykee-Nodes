@@ -98,6 +98,8 @@ function addCopyButton(node, displayName, label) {
         }
     });
     btn.serialize = false;
+    btn.options = btn.options || {};
+    btn.options.serialize = false;
     return btn;
 }
 
@@ -155,7 +157,13 @@ app.registerExtension({
                 const { widget: w } = ComfyWidgets["STRING"](
                     this, name, ["STRING", { multiline: true, default: "" }], app
                 );
-                w.serialize = false;
+                w.serialize = false; // keeps it out of the saved widgets_values
+                // The frontend builds the prompt from widget.options.serialize (NOT
+                // widget.serialize): without this the last response text is sent as
+                // an extra input, changes after every run, changes the cache key and
+                // makes the node (and everything downstream) re-run on every queue.
+                w.options = w.options || {};
+                w.options.serialize = false;
                 if (w.inputEl) {
                     w.inputEl.readOnly = true;
                     w.inputEl.placeholder = PLACEHOLDERS[name];

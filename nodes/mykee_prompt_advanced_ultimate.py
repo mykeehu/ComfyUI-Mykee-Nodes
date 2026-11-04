@@ -50,7 +50,19 @@ ChatML text is kept as template_mode "legacy_chatml" and as the automatic
 fallback. The thinking text is split off
 the answer and returned on its own "thinking" output.
 
-Both stages share the same 'clip' (loaded once). Each stage has its
+Both stages use the same 'clip' (loaded once) unless the optional 'clip_2'
+input is connected: then stage 2 runs with clip_2. Between the stages 'clip'
+is taken out of memory (only that clip - other models stay), clip_2 loads
+itself when stage 2 generates, and at the start of the NEXT run clip_2 is
+taken out first before 'clip' loads again. If clip_2 is the same clip as
+'clip', nothing is swapped.
+
+Stage 1 reuse: if nothing that feeds stage 1 changed since the previous run
+(prompt, system prompt, media content, sampling settings, seed, thinking,
+template mode, same text model), stage 1 is not generated again - its previous
+result is reused and only stage 2 runs (no clip swapping in that case either).
+Change the stage-1 seed (or anything else it uses) to get a new stage-1 result.
+Failed stage-1 runs are never reused. Each stage has its
 own independent seed/sampling/max_length/thinking controls, since a
 longer, varied stage-1 description and a short, deterministic stage-2
 answer usually want different settings.
@@ -123,9 +135,11 @@ Inputs:
                       of ComfyUI's control_after_generate, applied
                       after each run to update second_seed for the
                       next one.
-  unload_after_run  - frees 'clip' from VRAM once, after both stages
-                       finish (same technique as the other Prompt
-                       Advanced nodes).
+  unload_after_run  - frees the clip that was used LAST from VRAM once,
+                       after both stages finish: clip_2 if it is connected
+                       and stage 2 ran, otherwise 'clip' (same technique
+                       as the other Prompt Advanced nodes).
+  clip_2            - optional second text model for stage 2, see above.
   image             - optional. Connect to switch stage 1 into
                        image-description mode. Stage 2 never sees the
                        image directly, even if this is connected.
@@ -154,6 +168,7 @@ Outputs:
 
 import re
 import random
+from collections import OrderedDict
 
 from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
@@ -180,6 +195,94 @@ def _toast(node_id, severity, summary, detail):
         )
     except Exception:
         pass  # a failed notification must never break the actual node
+
+
+
+# ---- stage 1 reuse -----------------------------------------------------
+# When nothing that feeds stage 1 changed since the last run (only stage 2's
+# settings did), stage 1's result is reused and only stage 2 runs. The cache
+# key covers every stage-1 input incl. the media content and the clip object.
+_STAGE1_CACHE = OrderedDict()   # key -> (response, thinking, kind)
+_STAGE1_CACHE_MAX = 8
+_LAST_STAGE1_KEY = {}   # node id -> key; only used for the log line
+
+
+def _media_fingerprint(x):
+    """Cheap, content-based fingerprint of an image/video/audio input."""
+    if x is None:
+        return None
+    try:
+        import torch
+        if isinstance(x, torch.Tensor):
+            t = x.detach().float().cpu().reshape(-1)
+            n = t.numel()
+            step = max(1, n // 4096)
+            sample = t[::step][:4096]
+            return ("t", tuple(x.shape), str(x.dtype), round(float(t.double().sum()), 6),
+                    hash(tuple(round(float(v), 5) for v in sample.tolist())))
+    except Exception:
+        pass
+    if isinstance(x, dict):  # audio: {"waveform": tensor, "sample_rate": int}
+        return ("d", tuple(sorted((str(k), _media_fingerprint(v)) for k, v in x.items())))
+    if isinstance(x, (int, float, str, bool)):
+        return ("v", x)
+    return ("id", id(x))
+
+
+def _clip_signature(clip):
+    """Identifies the text model by what it IS (class, size, a few sampled
+    weights), not by Python object identity: other extensions (e.g. MultiGPU)
+    reset ComfyUI's cache between runs, the loader then runs again and hands
+    over a brand-new clip object holding the same model."""
+    try:
+        patcher = getattr(clip, "patcher", None)
+        model = getattr(patcher, "model", None)
+        if model is None:
+            return None
+        sig = [type(model).__name__]
+        params = list(model.named_parameters())
+        sig.append(len(params))
+        sig.append(sum(int(p.numel()) for _, p in params))
+        # a few real weight values, so two different fine-tunes of the same
+        # architecture do not look alike; skipped silently if unreadable
+        try:
+            picks = sorted({0, len(params) // 3, (2 * len(params)) // 3, len(params) - 1})
+            vals = []
+            for i in picks:
+                name, p = params[i]
+                flat = p.detach().reshape(-1)
+                n = flat.numel()
+                idx = [0, n // 3, (2 * n) // 3, n - 1]
+                vals.append((name, tuple(round(float(flat[j].float().cpu()), 4) for j in idx)))
+            sig.append(tuple(vals))
+        except Exception:
+            sig.append("noweights")
+        return tuple(sig)
+    except Exception:
+        return None
+
+
+def _stage1_lookup(key):
+    value = _STAGE1_CACHE.get(key)
+    if value is not None:
+        _STAGE1_CACHE.move_to_end(key)
+    return value
+
+
+def _stage1_store(key, value):
+    _STAGE1_CACHE[key] = value
+    _STAGE1_CACHE.move_to_end(key)
+    while len(_STAGE1_CACHE) > _STAGE1_CACHE_MAX:
+        _STAGE1_CACHE.popitem(last=False)
+
+
+def _same_clip(a, b):
+    """True if both inputs are the same CLIP (same object, or sharing one
+    model patcher) - then there is nothing to swap between the stages."""
+    if a is b:
+        return True
+    pa, pb = getattr(a, "patcher", None), getattr(b, "patcher", None)
+    return pa is not None and pa is pb
 
 
 # ---- stage 1 defaults (same role as in Mykee Prompt Advanced) --------
@@ -434,6 +537,13 @@ def _sampling_widgets(prefix="", include_seed_control=False):
                        "this stage's sampling_mode is off.",
         }),
     }
+    if not prefix:
+        # Stage 1's widget is literally named "seed": ComfyUI attaches its
+        # own control to it and defaults it to "randomize", which changes the
+        # seed after every queue and re-generates the text on every run.
+        # "fixed" keeps that widget (saved widgets_values stay aligned) but
+        # leaves the seed alone.
+        widgets["seed"][1]["control_after_generate"] = "fixed"
     if include_seed_control:
         widgets[f"{prefix}seed_control"] = (
             ["fixed", "increment", "decrement", "randomize"],
@@ -584,9 +694,11 @@ class MykeePromptAdvancedUltimate:
         required.update({
             "unload_after_run": ("BOOLEAN", {
                 "default": False,
-                "tooltip": "Free 'clip' from VRAM once, right after both "
-                           "stages finish, without touching any other "
-                           "model loaded elsewhere in the workflow.",
+                "tooltip": "Free the clip that was used last from VRAM, "
+                           "right after both stages finish (clip_2 if it is "
+                           "connected and stage 2 ran, otherwise 'clip'), "
+                           "without touching any other model loaded "
+                           "elsewhere in the workflow.",
             }),
         })
         return {
@@ -622,6 +734,15 @@ class MykeePromptAdvancedUltimate:
                 "second_thinking_budget": ("INT", {
                     "default": 512, "min": 0, "max": 16384, "step": 64,
                     "tooltip": THINKING_BUDGET_TOOLTIP,
+                }),
+                "clip_2": ("CLIP", {
+                    "tooltip": "Optional. A second text model for stage 2. "
+                               "Connected (and different from 'clip'): stage 1 "
+                               "runs with 'clip', then 'clip' is taken out of "
+                               "memory, and stage 2 runs with clip_2. At the "
+                               "start of the next run clip_2 is taken out "
+                               "first, then 'clip' is loaded again. Not "
+                               "connected: both stages use 'clip'.",
                 }),
             },
             "hidden": {"node_id": "UNIQUE_ID"},
@@ -680,7 +801,8 @@ class MykeePromptAdvancedUltimate:
             second_temperature, second_top_k, second_top_p, second_min_p,
             second_repetition_penalty, second_presence_penalty, second_thinking,
             unload_after_run=False, image=None, video=None, audio=None,
-            template_mode="auto", thinking_budget=1024, second_thinking_budget=512, node_id=None):
+            template_mode="auto", thinking_budget=1024, second_thinking_budget=512,
+            clip_2=None, node_id=None):
 
         second_prompt_text = second_prompt.strip() if second_prompt and second_prompt.strip() else ""
 
@@ -701,6 +823,46 @@ class MykeePromptAdvancedUltimate:
                 },
                 "result": (prompt, second_prompt, response_1, response_2, tags_1, "", ""),
             }
+
+        # Two different clips: whatever the previous run left loaded of clip_2
+        # goes first, so 'clip' (stage 1) gets the room it needs.
+        two_clips = clip_2 is not None and not _same_clip(clip, clip_2)
+
+        # Stage 1 unchanged since the last run? Then reuse its result.
+        stage1_key = (
+            prompt, system_prompt, bool(generate_tags), int(max_length),
+            sampling_mode, seed, temperature, top_k, top_p, min_p, repetition_penalty,
+            presence_penalty, thinking, template_mode, thinking_budget,
+            _media_fingerprint(image), _media_fingerprint(video), _media_fingerprint(audio),
+            _clip_signature(clip),
+        )
+        if stage1_key[-1] is None:
+            stage1_key = None  # cannot identify the clip -> never reuse
+
+        cached_1 = None
+        if stage1_key is not None:
+            try:
+                hash(stage1_key)
+                cached_1 = _stage1_lookup(stage1_key)
+            except TypeError:
+                stage1_key = None
+        if stage1_key is not None and cached_1 is None:
+            # Say WHY stage 1 has to run again (compared with this node's last run).
+            names = ("prompt", "system_prompt", "generate_tags", "max_length", "sampling_mode",
+                     "seed", "temperature", "top_k", "top_p", "min_p", "repetition_penalty",
+                     "presence_penalty", "thinking", "template_mode", "thinking_budget",
+                     "image", "video", "audio", "clip")
+            last = _LAST_STAGE1_KEY.get(node_id)
+            if last is None:
+                why = "no previous result for this node"
+            else:
+                diff = [n for n, a, b in zip(names, last, stage1_key) if a != b]
+                why = ", ".join(diff) if diff else "result no longer cached"
+            print(f"Mykee Prompt Advanced Ultimate: stage 1 runs ({why}).")
+            _LAST_STAGE1_KEY[node_id] = stage1_key
+
+        if two_clips and cached_1 is None:
+            _unload_clip(clip_2)
 
         # ---- stage 1 ---------------------------------------------------
         custom_sys_1 = system_prompt.strip() if system_prompt and system_prompt.strip() else None
@@ -728,11 +890,17 @@ class MykeePromptAdvancedUltimate:
                 sys_text = sys_text + TAG_LIST_ADDENDUM_TEMPLATE
             return sys_text, user_text
 
-        response_1, thinking_1, used_kind_1 = self._generate_stage(
-            clip, make_prompts_1, image, video, audio, max_length, sampling_mode, seed, temperature,
-            top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
-            "Stage 1", node_id, template_mode, thinking_budget,
-        )
+        if cached_1 is not None:
+            response_1, thinking_1, used_kind_1 = cached_1
+            print("Mykee Prompt Advanced Ultimate: stage 1 unchanged - reusing its previous result.")
+        else:
+            response_1, thinking_1, used_kind_1 = self._generate_stage(
+                clip, make_prompts_1, image, video, audio, max_length, sampling_mode, seed, temperature,
+                top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
+                "Stage 1", node_id, template_mode, thinking_budget,
+            )
+            if stage1_key is not None and not str(response_1).startswith("[Stage 1:"):
+                _stage1_store(stage1_key, (response_1, thinking_1, used_kind_1))
 
         # ---- stage 2 (text-only; only runs if enabled and non-empty) ---
         thinking_2 = ""
@@ -749,8 +917,17 @@ class MykeePromptAdvancedUltimate:
                 sys_text_2 = custom_sys_2 or STAGE2_DEFAULT_SYSTEM_PROMPT_TEMPLATE.format(max_length=int(second_max_length))
                 user_text_2 = f"RESPONSE 1:\n{quote_text(response_1)}\n\n{second_prompt_text}"
 
+            stage_2_clip = clip
+            if two_clips and cached_1 is None:
+                # Stage 1 is done: take its clip out of memory, stage 2 loads
+                # clip_2 by itself when it generates.
+                _unload_clip(clip)
+                print("Mykee Prompt Advanced Ultimate: clip unloaded, stage 2 runs with clip_2.")
+            if two_clips:
+                stage_2_clip = clip_2
+
             response_2, thinking_2, _ = self._generate_stage(
-                clip, lambda kind: (sys_text_2, user_text_2), None, None, None,
+                stage_2_clip, lambda kind: (sys_text_2, user_text_2), None, None, None,
                 second_max_length, second_sampling_mode, second_seed,
                 second_temperature, second_top_k, second_top_p, second_min_p,
                 second_repetition_penalty, second_presence_penalty, second_thinking,
@@ -816,7 +993,8 @@ class MykeePromptAdvancedUltimate:
             print(response_2)
 
         if unload_after_run:
-            _unload_clip(clip)
+            # the clip that was used last
+            _unload_clip(clip_2 if (run_stage_2 and two_clips) else clip)
 
         return {
             "ui": {

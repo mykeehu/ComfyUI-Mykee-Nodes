@@ -184,6 +184,10 @@ app.registerExtension({
                 }
                 if (this._mykeeApplyNegativeVisibility) this._mykeeApplyNegativeVisibility();
             }
+            // The saved node size already includes a visible preview picture.
+            // Only trusted when the saved workflow says it was saved with the
+            // preview's room included (older workflows never did).
+            this._mykeeFromSave = Number(this.properties?.mykee_preview_room) > 0;
             // Show the last loaded template right away (template_name was just
             // restored); the list refresh below then confirms it against disk.
             if (this._mykeeSyncPicker) this._mykeeSyncPicker(true);
@@ -243,6 +247,7 @@ app.registerExtension({
                     }
                     if (data.name && data.name !== nameWidget.value) nameWidget.value = data.name;
                     this.setDirtyCanvas(true, true);
+                    if (this._mykeeUpdatePreview) this._mykeeUpdatePreview();
                 } catch (e) {
                     window.alert("Load failed: " + e.message);
                 }
@@ -275,6 +280,7 @@ app.registerExtension({
                 const known = existingNames.includes(name);
                 listWidget.value = name && (known || optimistic) ? name : "";
                 this.setDirtyCanvas(true, true);
+                if (this._mykeeUpdatePreview) this._mykeeUpdatePreview();
             };
             this._mykeeSyncPicker = syncPicker;
 
@@ -327,6 +333,7 @@ app.registerExtension({
                 negativeWidget.value = "";
                 listWidget.value = "";
                 this.setDirtyCanvas(true, true);
+                if (this._mykeeUpdatePreview) this._mykeeUpdatePreview();
             });
             newBtn.serialize = false;
 
@@ -370,8 +377,138 @@ app.registerExtension({
             });
             saveBtn.serialize = false;
 
-            const reloadBtn = this.addWidget("button", "🔄 Reload", null, refreshList);
+            const reloadBtn = this.addWidget("button", "🔄 Reload", null, () => {
+                refreshList();
+                if (this._mykeeUpdatePreview) this._mykeeUpdatePreview(true);
+            });
             reloadBtn.serialize = false;
+
+            // ---- Preview picture -------------------------------------------
+            // An image with the same base name as the template, in the same
+            // folder, is shown under the Reload button (a sample of what the
+            // template makes). No such image: the widget is hidden and takes
+            // no room, the node is as small as before.
+            const PREVIEW_MIN_H = 100;
+            const PREVIEW_MAX_H = 320;
+            const PREVIEW_PAD = 8;
+            const previewImg = document.createElement("img");
+            previewImg.style.cssText =
+                "width:100%;height:100%;object-fit:contain;display:block;border-radius:4px;pointer-events:none;";
+            previewImg.draggable = false;
+            const previewBox = document.createElement("div");
+            previewBox.style.cssText = "width:100%;height:100%;box-sizing:border-box;padding:2px 0;overflow:hidden;";
+            previewBox.appendChild(previewImg);
+
+            let previewH = 0; // current height of the preview row
+            let previewShown = false;
+            const previewWidget = this.addDOMWidget("template_preview", "MYKEE_TEMPLATE_PREVIEW", previewBox, {
+                serialize: false,
+                getMinHeight: () => previewH,
+                getMaxHeight: () => previewH,
+            });
+            previewWidget.serialize = false;
+            previewWidget.computeSize = (width) => [width ?? 0, previewH];
+            setWidgetVisible(previewWidget, false);
+
+            let grown = 0; // how much taller the node was made for the preview
+            const showPreview = (naturalW, naturalH) => {
+                const usable = Math.max(120, this.size[0] - 20);
+                const h = Math.round(Math.min(PREVIEW_MAX_H, Math.max(PREVIEW_MIN_H, usable * (naturalH / naturalW))));
+                const wasShown = previewShown;
+                const oldH = previewH;
+                previewH = h;
+                if (!wasShown) {
+                    previewShown = true;
+                    setWidgetVisible(previewWidget, true);
+                }
+                if (!wasShown && !this._mykeeFromSave) {
+                    // The text boxes keep the room they had: the node grows by
+                    // the height of the preview.
+                    grown = h + PREVIEW_PAD;
+                    this.setSize([this.size[0], this.size[1] + grown]);
+                } else if (!wasShown) {
+                    // A workflow saved with the preview showing already holds
+                    // the room for it.
+                    grown = h + PREVIEW_PAD;
+                } else if (h !== oldH) {
+                    grown += h - oldH;
+                    this.setSize([this.size[0], this.size[1] + (h - oldH)]);
+                }
+                this._mykeeFromSave = false;
+                this.properties = this.properties || {};
+                this.properties.mykee_preview_room = grown;
+                const needed = this.computeSize();
+                if (this.size[1] < needed[1]) this.setSize([this.size[0], needed[1]]);
+                this.setDirtyCanvas(true, true);
+            };
+
+            const hidePreview = () => {
+                this._mykeeFromSave = false;
+                if (!previewShown) { if (this.properties) this.properties.mykee_preview_room = 0; return; }
+                previewShown = false;
+                previewH = 0;
+                previewImg.removeAttribute("src");
+                setWidgetVisible(previewWidget, false);
+                const floor = this.computeSize();
+                // Back to the height the node had without the preview.
+                this.setSize([this.size[0], Math.max(floor[1], this.size[1] - grown)]);
+                grown = 0;
+                if (this.properties) this.properties.mykee_preview_room = 0;
+                this.setDirtyCanvas(true, true);
+            };
+
+            let previewSeq = 0;
+            let previewTimer = null;
+            let previewKey = "";
+            const runPreviewUpdate = async (force) => {
+                const seq = ++previewSeq;
+                const name = (nameWidget.value || "").trim();
+                if (!name) {
+                    previewKey = "";
+                    hidePreview();
+                    return;
+                }
+                try {
+                    const q = `path=${encodeURIComponent(currentPath())}&name=${encodeURIComponent(name)}`;
+                    const info = await fetchJSON(`/mykee/prompt_templates/image_info?${q}`);
+                    if (seq !== previewSeq) return; // a newer request is in flight
+                    if (!info.exists) {
+                        previewKey = "";
+                        hidePreview();
+                        return;
+                    }
+                    const key = `${q}&v=${info.version}`;
+                    if (key === previewKey && previewShown && !force) return;
+                    previewKey = key;
+                    const probe = new Image();
+                    probe.onload = () => {
+                        if (seq !== previewSeq) return;
+                        previewImg.src = probe.src;
+                        showPreview(probe.naturalWidth || 1, probe.naturalHeight || 1);
+                    };
+                    probe.onerror = () => {
+                        if (seq === previewSeq) hidePreview();
+                    };
+                    probe.src = api.apiURL(`/mykee/prompt_templates/image?${key}`);
+                } catch (e) {
+                    if (seq === previewSeq) hidePreview();
+                }
+            };
+            this._mykeeUpdatePreview = (force = false) => {
+                clearTimeout(previewTimer);
+                previewTimer = setTimeout(() => runPreviewUpdate(force), 150);
+            };
+
+            // Typing / pasting a template name re-checks for a picture.
+            {
+                const node = this;
+                const origNameCallback = nameWidget.callback;
+                nameWidget.callback = function () {
+                    const r = origNameCallback ? origNameCallback.apply(this, arguments) : undefined;
+                    node._mykeeUpdatePreview();
+                    return r;
+                };
+            }
 
             refreshList();
             enforceMinWidth(this);

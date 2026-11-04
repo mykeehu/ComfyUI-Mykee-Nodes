@@ -607,6 +607,12 @@ class MykeePromptModifier:
                 }),
                 "seed": ("INT", {
                     "default": 0, "min": 0, "max": 0xffffffffffffffff,
+                    # ComfyUI attaches a control to any widget named "seed" and
+                    # defaults it to "randomize", which changes the seed after every
+                    # queue and so re-generates the text on every run. "fixed" keeps
+                    # the widget (so saved widgets_values stay aligned) but leaves
+                    # the seed alone; switch it to randomize when a reroll is wanted.
+                    "control_after_generate": "fixed",
                     "tooltip": "Change this to get a different phrasing if "
                                "the response isn't good enough. Has no "
                                "effect when sampling_mode is off.",

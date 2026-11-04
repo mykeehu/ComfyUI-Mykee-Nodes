@@ -487,18 +487,28 @@ def generation_error_hint(media_used):
 # --------------------------------------------------------------------------
 
 def unload_clip(clip):
-    """Best-effort VRAM cleanup for just this clip, without touching any
-    other model loaded elsewhere in the workflow."""
+    """Frees THIS clip (and its clones) from VRAM - and only this one: every
+    other model loaded elsewhere in the workflow (e.g. the diffusion model)
+    stays where it is. It is loaded again automatically the next time it is
+    used (clip.generate() loads its model first).
+
+    Note: model_management.free_memory(..., keep_loaded) wants LoadedModel
+    entries in keep_loaded. Passing the patchers from loaded_models() matches
+    nothing, so the older code here actually unloaded EVERY model."""
     if model_management is None:
         return
     patcher = getattr(clip, "patcher", None)
     if patcher is None:
         return
     try:
-        loaded = model_management.loaded_models()
-        if patcher in loaded:
-            loaded.remove(patcher)
-        model_management.free_memory(1e30, model_management.get_torch_device(), loaded)
+        unload_only = getattr(model_management, "unload_model_and_clones", None)
+        if callable(unload_only):
+            unload_only(patcher)
+        else:
+            # Older ComfyUI: keep every OTHER loaded model (LoadedModel entries).
+            keep = [m for m in model_management.current_loaded_models
+                    if getattr(m, "model", None) is not patcher]
+            model_management.free_memory(1e30, model_management.get_torch_device(), keep)
         model_management.soft_empty_cache(True)
     except Exception:
         pass

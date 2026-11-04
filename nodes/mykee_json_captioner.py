@@ -222,17 +222,22 @@ _THINK_BUDGET_ERROR = ("the model used up its token budget while still "
 def _unload_clip(clip):
     """Best-effort VRAM cleanup for just this node's clip, without
     touching any other model loaded elsewhere in the workflow (same
-    technique as the Mykee Prompt Advanced nodes)."""
+    technique as the Mykee Prompt Advanced nodes - see unload_clip() in
+    mykee_llm_common.py for why model_management.unload_model_and_clones
+    is used instead of free_memory with a list of patchers)."""
     if model_management is None:
         return
     patcher = getattr(clip, "patcher", None)
     if patcher is None:
         return
     try:
-        loaded = model_management.loaded_models()
-        if patcher in loaded:
-            loaded.remove(patcher)
-        model_management.free_memory(1e30, model_management.get_torch_device(), loaded)
+        unload_only = getattr(model_management, "unload_model_and_clones", None)
+        if callable(unload_only):
+            unload_only(patcher)
+        else:
+            keep = [m for m in model_management.current_loaded_models
+                    if getattr(m, "model", None) is not patcher]
+            model_management.free_memory(1e30, model_management.get_torch_device(), keep)
         model_management.soft_empty_cache(True)
     except Exception:
         pass

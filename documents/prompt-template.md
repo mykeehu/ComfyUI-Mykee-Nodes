@@ -51,6 +51,17 @@ Picker and buttons:
 Unlike the StyleGAN Vector Save node, none of this needs the graph to
 run - Save fires its REST call immediately, with no "armed"/queue step.
 
+**Preview picture:** if there is an image with the same base name as the
+template in the same folder (`<template_name>.png`, `.jpg`, `.jpeg`, `.webp`,
+`.gif` or `.bmp`; the extension is not case sensitive), it is shown under the
+**Reload** button - handy as a sample of what the template makes. Put the
+picture there by hand (for example save a good result next to the `.json`);
+the node does not create it. With no such image the preview row takes no
+room and the node keeps its normal size. The picture follows the template
+name: picking a template, typing a name, **New** and **Reload** all re-check
+it (Reload also picks up a picture that was just added or replaced). A
+workflow saved with a visible preview comes back with it.
+
 **Show Negative Prompt switch** (`show_negative_prompt`, off by default):
 most prompts today don't use a negative prompt, and an empty box just
 wastes space. While the switch is off, the negative prompt box is hidden

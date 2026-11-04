@@ -180,6 +180,31 @@ def _save_template(directory, name, prompt, negative_prompt):
     os.replace(tmp, p)
 
 
+# A template can have a preview picture: an image with the same base name in
+# the same folder (<name>.png / .jpg / .jpeg / .webp / .gif / .bmp). Not
+# created by this node - put it there by hand, e.g. a sample the template made.
+_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp")
+
+
+def _find_template_image(directory, name):
+    """Full path of the picture that belongs to template `name`, or None."""
+    if not name:
+        return None
+    for ext in _IMAGE_EXTS:  # exact-case match first
+        p = os.path.join(directory, name + ext)
+        if os.path.isfile(p):
+            return p
+    try:  # then a case-insensitive one (Photo.PNG, name.JPG ...)
+        wanted = name.lower()
+        for f in sorted(os.listdir(directory)):
+            base, ext = os.path.splitext(f)
+            if base.lower() == wanted and ext.lower() in _IMAGE_EXTS:
+                return os.path.join(directory, f)
+    except OSError:
+        pass
+    return None
+
+
 class MykeePromptTemplate:
     @classmethod
     def INPUT_TYPES(cls):
@@ -266,6 +291,28 @@ try:
             "prompt": template["prompt"],
             "negative_prompt": template["negative_prompt"],
         })
+
+    @_routes.get("/mykee/prompt_templates/image_info")
+    async def _mykee_pt_image_info(request):
+        name = _sanitize_template_name(request.query.get("name", ""))
+        directory = _templates_dir(request.query.get("path", ""))
+        found = _find_template_image(directory, name)
+        if not found:
+            return _aiohttp_web.json_response({"exists": False})
+        try:
+            version = os.stat(found).st_mtime_ns
+        except OSError:
+            version = 0
+        return _aiohttp_web.json_response({"exists": True, "version": version})
+
+    @_routes.get("/mykee/prompt_templates/image")
+    async def _mykee_pt_image(request):
+        name = _sanitize_template_name(request.query.get("name", ""))
+        directory = _templates_dir(request.query.get("path", ""))
+        found = _find_template_image(directory, name)
+        if not found:
+            return _aiohttp_web.json_response({"error": "no image for this template"}, status=404)
+        return _aiohttp_web.FileResponse(found, headers={"Cache-Control": "no-cache"})
 
     @_routes.post("/mykee/prompt_templates/save")
     async def _mykee_pt_save(request):

@@ -96,8 +96,27 @@ the marker, `tags_1` stays empty.)
   (optional) - extra tokens for each stage's thinking (default 1024 / 512)
   and the chat-template mode; see
   [Mykee Prompt Advanced](prompt-advanced.md#gemma-4-video-and-audio).
-- **unload_after_run** - frees `clip` from VRAM once, after both stages
-  have finished.
+- **unload_after_run** - frees the clip that was used *last* from VRAM once,
+  after both stages have finished: `clip_2` if it is connected and stage 2
+  ran, otherwise `clip`. Only that clip is unloaded; every other model
+  (e.g. the diffusion model) stays loaded.
+- **clip_2** (optional) - a second text model for stage 2. Connected (and not
+  the same clip as `clip`): stage 1 runs with `clip`, then `clip` is taken out
+  of memory and stage 2 runs with `clip_2` (it loads itself). At the start of
+  the next run `clip_2` is taken out first and `clip` is loaded again, so only
+  one of the two sits in memory at a time. Not connected, or the same clip as
+  `clip`: both stages use `clip` as before, nothing is swapped.
+
+## Stage 1 reuse
+
+If nothing that feeds stage 1 changed since the previous run (prompt, system
+prompt, image/video/audio content, stage-1 sampling settings and seed, thinking,
+template mode, same `clip`), stage 1 is **not generated again**: its previous
+result is reused and only stage 2 runs. This makes iterating on the stage-2
+prompt fast. With `clip_2` connected no clip swapping happens in that case.
+To get a fresh stage-1 result, change the stage-1 seed (or any other stage-1
+input). Failed stage-1 runs are never reused. The cache lives in memory only
+(last 8 results) and is cleared when ComfyUI restarts.
 
 ## Outputs
 
