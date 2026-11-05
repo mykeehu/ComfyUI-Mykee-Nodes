@@ -245,8 +245,8 @@ class MykeePromptTemplate:
             "hidden": {"unique_id": "UNIQUE_ID"},
         }
 
-    RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("positive_prompt", "negative_prompt")
+    RETURN_TYPES = ("STRING", "STRING", "STRING")
+    RETURN_NAMES = ("positive_prompt", "negative_prompt", "template_name")
     FUNCTION = "run"
     CATEGORY = "Mykee/Prompt"
 
@@ -255,7 +255,10 @@ class MykeePromptTemplate:
         # A hidden negative box must not silently feed stale text downstream.
         if not show_negative_prompt:
             negative_prompt_text = ""
-        return (positive_prompt_text, negative_prompt_text)
+        # Handy as a file name prefix: cleaned like the saved file name, and
+        # ComfyUI's own default prefix when nothing is typed.
+        name_out = _sanitize_template_name(template_name) or "ComfyUI"
+        return (positive_prompt_text, negative_prompt_text, name_out)
 
 
 # ---------------------------------------------------------------------------

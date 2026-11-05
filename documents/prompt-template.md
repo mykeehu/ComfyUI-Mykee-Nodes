@@ -91,3 +91,7 @@ Outputs:
 - **positive_prompt** (STRING) - `positive_prompt_text`, unchanged.
 - **negative_prompt** (STRING) - `negative_prompt_text`, unchanged -
   or an empty string while `show_negative_prompt` is off.
+- **template_name** (STRING) - the current `template_name` text, cleaned
+  the same way as a saved file name (no characters invalid in a file name),
+  so it can feed a filename prefix directly. Empty `template_name` gives
+  `ComfyUI`, the standard default prefix.
