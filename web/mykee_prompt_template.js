@@ -149,8 +149,73 @@ function updateButtonCursor(node) {
     }
 }
 
+// ---- template_name output without touching the cache --------------------
+// ComfyUI builds a node's cache key from its inputs and its ancestors' inputs.
+// With the typed template_name as a real input of this node, renaming a
+// template would change the key of everything downstream (encode, sampler,
+// decode...) and the whole image would be generated again just to get a new
+// file name. So, when the prompt is built, the name is taken out of the node's
+// inputs (the node ignores it anyway) and delivered as a plain constant to
+// whatever is wired to the "template_name" output. Only that receiving node
+// (e.g. Save Image) sees a change and runs again; the rest stays cached.
+const NAME_OUTPUT_SLOT = 2;
+const INVALID_NAME_CHARS = '<>:"/\\|?*';
+const RESERVED_NAMES = new Set(["CON", "PRN", "AUX", "NUL",
+    ...Array.from({ length: 9 }, (_, i) => `COM${i + 1}`),
+    ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`)]);
+
+function cleanNameForFile(name) {
+    // Same rules as the backend's template file name sanitizing.
+    let out = Array.from(String(name ?? "").trim())
+        .filter((c) => !INVALID_NAME_CHARS.includes(c) && c.charCodeAt(0) >= 32).join("");
+    out = out.trim().replace(/[. ]+$/, "").trim();
+    if (RESERVED_NAMES.has(out.toUpperCase())) out = "_" + out;
+    out = out.slice(0, 150).trim().replace(/[. ]+$/, "");
+    return out || "ComfyUI";
+}
+
+function installNameOutputRewrite() {
+    const original = app.graphToPrompt;
+    if (typeof original !== "function" || original._mykeeNameRewrite) return;
+    const wrapped = async function () {
+        const result = await original.apply(this, arguments);
+        try {
+            const output = result?.output;
+            if (!output) return result;
+            const nameByNode = new Map();
+            for (const node of app.graph?._nodes ?? []) {
+                if ((node.comfyClass ?? node.type) !== NODE_NAME) continue;
+                const w = node.widgets?.find((x) => x.name === "template_name");
+                nameByNode.set(String(node.id), cleanNameForFile(w?.value));
+            }
+            if (!nameByNode.size) return result;
+            for (const entry of Object.values(output)) {
+                for (const [key, val] of Object.entries(entry?.inputs ?? {})) {
+                    if (Array.isArray(val) && val.length === 2 && val[1] === NAME_OUTPUT_SLOT
+                        && nameByNode.has(String(val[0]))) {
+                        entry.inputs[key] = nameByNode.get(String(val[0]));
+                    }
+                }
+            }
+            for (const id of nameByNode.keys()) {
+                if (output[id]?.inputs && "template_name" in output[id].inputs) {
+                    output[id].inputs.template_name = "";
+                }
+            }
+        } catch (err) {
+            console.warn("Mykee Prompt Template: name output rewrite skipped", err);
+        }
+        return result;
+    };
+    wrapped._mykeeNameRewrite = true;
+    app.graphToPrompt = wrapped;
+}
+
 app.registerExtension({
     name: "Mykee.PromptTemplate",
+    setup() {
+        installNameOutputRewrite();
+    },
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== NODE_NAME) return;
 

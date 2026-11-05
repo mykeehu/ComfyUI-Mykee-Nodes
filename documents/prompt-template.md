@@ -95,3 +95,10 @@ Outputs:
   the same way as a saved file name (no characters invalid in a file name),
   so it can feed a filename prefix directly. Empty `template_name` gives
   `ComfyUI`, the standard default prefix.
+
+  Renaming a template does **not** regenerate the image: when the prompt is
+  queued, the name is delivered as a plain constant to whatever is wired to
+  this output (e.g. Save Image's `filename_prefix`), and the node's own
+  `template_name` input is blanked in the prompt. Only the receiving node runs
+  again; the prompt path (text encode, sampler, decode...) stays cached. The
+  saved workflow still keeps the real name.
