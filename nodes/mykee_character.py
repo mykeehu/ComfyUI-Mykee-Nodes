@@ -251,6 +251,32 @@ def _require_cv2():
         )
 
 
+def _face_frontality(face):
+    """0..1: how far the face is turned towards the camera, judged from where
+    the nose sits between the eyes (1 = nose midway = frontal, 0 = profile).
+    0.3 when the 5 landmarks look unusable. Same measure Face Track uses."""
+    try:
+        re_ = np.array([face[4], face[5]], dtype=np.float64)
+        le_ = np.array([face[6], face[7]], dtype=np.float64)
+        nose = np.array([face[8], face[9]], dtype=np.float64)
+        mouth_mid = np.array([(face[10] + face[12]) * 0.5, (face[11] + face[13]) * 0.5], dtype=np.float64)
+    except Exception:
+        return 0.3
+    eye_mid = (re_ + le_) * 0.5
+    v = le_ - re_
+    m = mouth_mid - eye_mid
+    e2e = float(np.hypot(*v))
+    e2m = float(np.hypot(*m))
+    if e2e > 2.0 and e2m > 2.0:
+        u = v / e2e
+        down = np.array([-u[1], u[0]])
+        ratio = e2m / e2e
+        if float(np.dot(m, down)) > 0.0 and 0.5 <= ratio <= 3.0:
+            nose_off = float(np.dot(nose - eye_mid, u)) / e2e
+            return float(np.clip(1.0 - abs(nose_off) / 0.6, 0.0, 1.0))
+    return 0.3
+
+
 def _select_face(faces, which_face, face_index=0, image_size=None):
     """Shared 'which face to pick among several detections' logic - used by
     both MykeeFaceDetectAlignCrop and MykeeIdentityCompare.
@@ -290,6 +316,14 @@ def _select_face(faces, which_face, face_index=0, image_size=None):
         return ordered[idx]
     if which_face == "largest":
         return max(faces, key=lambda f: f[2] * f[3])
+    if which_face == "most_frontal":
+        # Among the faces turned (almost) fully towards the camera, the
+        # largest one - so a big profile view loses against a smaller
+        # frontal close-up (character sheets).
+        fr = [_face_frontality(f) for f in faces]
+        top = max(fr)
+        keep = [f for f, v in zip(faces, fr) if v >= max(0.6, top - 0.2)] or [faces[int(np.argmax(fr))]]
+        return max(keep, key=lambda f: float(f[2] * f[3]))
     if which_face == "leftmost":
         return min(faces, key=lambda f: f[0] + f[2] / 2.0)
     if which_face == "rightmost":
@@ -344,66 +378,6 @@ def _detect_faces(bgr, yunet_path, score_threshold, min_face_size_pct=0.0):
 
 
 _SFACE_RECOGNIZER_CACHE = {}
-
-
-def _hash_file(path, chunk_size=1024 * 1024):
-    """SHA256 of a model file - so we can tell, byte for byte, whether the
-    .onnx file the live ComfyUI process resolves to is IDENTICAL to the
-    one used in an external diagnostic (e.g. a different file with a
-    similar/duplicate name in a second annotators folder, or a partial/
-    corrupted download, would show up here as a different hash)."""
-    try:
-        import hashlib
-        h = hashlib.sha256()
-        with open(path, "rb") as f:
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                h.update(chunk)
-        return h.hexdigest()
-    except Exception as e:
-        return f"<could not hash: {e}>"
-
-
-def _debug_env_dump(yunet_path, sface_path):
-    """Temporary diagnostic dump (see MYKEE-XXXX) - prints everything that
-    could plausibly differ between a clean external script and the live
-    ComfyUI process at the exact moment MykeeIdentityCompare.run() starts:
-    which process/thread this is, the exact cv2 build in use, the exact
-    resolved model file paths + their size/hash (to catch a
-    different/duplicate/corrupted .onnx being picked up), and GPU memory
-    pressure. Safe to remove once the NaryEltwise/Add_44 issue is
-    resolved - it only prints, it doesn't change any behavior."""
-    import threading
-    import os as _os
-
-    print("\n[Mykee DEBUG] ===================================================")
-    print(f"[Mykee DEBUG] pid={_os.getpid()} thread={threading.current_thread().name}")
-    print(f"[Mykee DEBUG] cv2.__version__={cv2.__version__} cv2.__file__={cv2.__file__}")
-    try:
-        print(f"[Mykee DEBUG] cv2.getNumThreads()={cv2.getNumThreads()}")
-    except Exception as e:
-        print(f"[Mykee DEBUG] cv2.getNumThreads() failed: {e}")
-
-    for label, path in (("yunet_path", yunet_path), ("sface_path", sface_path)):
-        try:
-            size = _os.path.getsize(path)
-        except Exception as e:
-            size = f"<error: {e}>"
-        print(f"[Mykee DEBUG] {label}={path!r} size={size} sha256={_hash_file(path)}")
-
-    try:
-        import torch as _torch
-        if _torch.cuda.is_available():
-            print(
-                f"[Mykee DEBUG] torch.cuda: allocated={_torch.cuda.memory_allocated()} "
-                f"reserved={_torch.cuda.memory_reserved()} "
-                f"free/total={_torch.cuda.mem_get_info()}"
-            )
-    except Exception as e:
-        print(f"[Mykee DEBUG] torch.cuda info failed: {e}")
-    print("[Mykee DEBUG] ===================================================\n")
 
 
 def _get_sface_recognizer(sface_path):
@@ -517,7 +491,7 @@ class MykeeFaceDetectAlignCrop:
                     [
                         "highest_score", "largest", "leftmost", "rightmost", "topmost", "bottommost",
                         "top_left", "top_right", "bottom_left", "bottom_right",
-                        "x_order", "y_order",
+                        "x_order", "y_order", "most_frontal",
                     ],
                     {
                         "default": "highest_score",
@@ -530,7 +504,10 @@ class MykeeFaceDetectAlignCrop:
                             "x or y (e.g. two faces stacked on the right side of a character sheet). "
                             "'x_order'/'y_order': sort all faces left-to-right / top-to-bottom and "
                             "pick the one at face_index, so you can step through the detections "
-                            "(0 = first). The num_faces_found output tells you how many there are."
+                            "(0 = first). 'most_frontal': the face turned most towards the camera "
+                            "(the largest among the frontal ones) - for character sheets where a "
+                            "profile view is bigger than the frontal close-up. "
+                            "The num_faces_found output tells you how many there are."
                         ),
                     },
                 ),
@@ -1495,8 +1472,6 @@ class MykeeIdentityCompare:
         if not os.path.isfile(sface_path):
             raise FileNotFoundError(f"SFace model not found: {sface_path}.")
 
-        _debug_env_dump(yunet_path, sface_path)
-
         gen_bgr = tensor_to_bgr(generated_image)
         gen_h, gen_w = gen_bgr.shape[:2]
 
@@ -1554,6 +1529,7 @@ class MykeeIdentityCompare:
             return _blank_result("\n".join(lines))
 
         matches_by_face = {}  # detected-face index -> [person indices]
+        console_lines = []  # per-person similarity of EVERY detected face, printed to the console
         results = {}  # person index -> (best_similarity, best_passed, best_face_idx or None, matched_faces)
 
         for i in range(1, num_people + 1):
@@ -1588,6 +1564,11 @@ class MykeeIdentityCompare:
                 continue
 
             sims = [_cosine_similarity(src_emb, gen_embs[vi]) for vi in valid_face_indices]
+            console_lines.append(
+                f"[Mykee Identity Compare] Person {i}: "
+                + ", ".join(f"face #{vi + 1} = {float(sm):.5f}" for vi, sm in zip(valid_face_indices, sims))
+                + f"  (threshold {pass_threshold:.5f})"
+            )
             local_best = int(np.argmax(sims))
             best_idx = valid_face_indices[local_best]
             best_sim = float(sims[local_best])
@@ -1617,16 +1598,16 @@ class MykeeIdentityCompare:
                 matches_by_face.setdefault(fidx, []).append(i)
 
             if len(matched_faces) > 1:
-                extra = ", ".join(f"face #{fidx + 1} ({fsim:.3f})" for fidx, fsim in matched_faces[1:])
+                extra = ", ".join(f"face #{fidx + 1} ({fsim:.5f})" for fidx, fsim in matched_faces[1:])
                 lines.append(
                     f"Person {i} (source_image_{i}): {len(matched_faces)} face(s) matched above "
                     f"threshold={pass_threshold:.2f} - best = face #{best_idx + 1}, similarity "
-                    f"{best_sim:.3f}; also matched {extra}"
+                    f"{best_sim:.5f}; also matched {extra}"
                 )
             else:
                 lines.append(
                     f"Person {i} (source_image_{i}): best match = face #{best_idx + 1} in "
-                    f"generated_image, similarity {best_sim:.3f} "
+                    f"generated_image, similarity {best_sim:.5f} "
                     f"({'MATCH' if passed else 'MISMATCH'}, threshold={pass_threshold:.2f})"
                 )
 
@@ -1640,6 +1621,8 @@ class MykeeIdentityCompare:
                 )
 
         summary = "\n".join(lines)
+        for _cl in console_lines:
+            print(_cl)
 
         out = [summary]
         for i in range(1, MAX_PEOPLE + 1):

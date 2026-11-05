@@ -155,14 +155,8 @@ def _detect_rows(bgr, yunet_path, score_threshold, min_face_px=0, upscale=1.0):
 
 
 def _pick_source_face(rows, which, index, image_size):
-    """_select_face plus 'most_frontal': among the faces turned (almost) fully
-    towards the camera - judged from the nose position between the eyes - the
-    largest one. A big profile view therefore loses against a smaller frontal."""
-    if which == "most_frontal":
-        fr_ = [_face_window(r, 2.0, "none")["frontality"] for r in rows]
-        top = max(fr_)
-        keep = [r for r, f in zip(rows, fr_) if f >= max(0.6, top - 0.2)] or [rows[int(np.argmax(fr_))]]
-        return max(keep, key=lambda r: float(r[2] * r[3]))
+    """Picks the reference face; 'most_frontal' is handled by the shared
+    _select_face (same logic as Mykee Face Detect)."""
     return _select_face(rows, which, index, image_size=image_size)
 
 

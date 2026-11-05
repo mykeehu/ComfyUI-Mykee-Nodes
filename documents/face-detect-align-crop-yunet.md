@@ -59,6 +59,11 @@ the single-axis options are not enough, so there are more:
   (0 = first), so you can step through the detections one by one. An index
   past the last face is clamped to the last one; `num_faces_found` tells
   you the count.
+- `most_frontal` - the face turned most towards the camera: among the faces
+  that look (almost) straight at it - judged from where the nose sits between
+  the eyes - the largest one. For character sheets where a profile view is
+  bigger than the frontal close-up. Same logic as Face Track's
+  `source_which_face`.
 
 **`min_face_size_pct`** - before `which_face`'s position-based selection
 (leftmost/rightmost/etc.) runs, this filters out detections that are too

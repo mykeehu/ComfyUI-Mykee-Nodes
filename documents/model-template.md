@@ -21,6 +21,12 @@ and whatever is selected there is what the loader receives. Only the
 outputs you actually need have to be connected - a single CLIP, two or
 three, or none at all.
 
+**Connecting takes over the loader's current selection.** When you connect an
+output to a loader (by hand), the file already selected in that loader becomes
+the output's value, so you don't have to look it up and pick it again. This
+happens only for the first loader on an output (a second loader connected to the
+same output keeps the value already set) and never while a workflow is loading.
+
 Templates are one small JSON file each, with the selection of the
 **connected** outputs:
 

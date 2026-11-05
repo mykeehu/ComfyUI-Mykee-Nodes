@@ -148,6 +148,7 @@ function describeInput(targetNode, slot) {
         nodeTitle: targetNode.title || targetNode.type,
         label: `${param} (${targetNode.title || targetNode.type})`,
         options: comboOptions(widget, targetNode),
+        currentValue: widget.value,
     };
 }
 
@@ -973,6 +974,7 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const ret = onConfigure?.apply(this, arguments);
+            this._mykeeConfiguredAt = Date.now();
             // Switching workflow tabs / loading a workflow creates the node
             // first (default widget values, so custom_path still empty) and
             // only THEN restores the saved values - the list has to be re-read
@@ -994,6 +996,20 @@ app.registerExtension({
             const OUTPUT = window.LiteGraph?.OUTPUT ?? 2;
             if (type !== OUTPUT || slot >= SLOTS.length) return ret;
             if (connected && linkInfo && !checkNewLink(this, slot, linkInfo)) return ret;
+            // A link made by hand (not while a workflow is loading) onto a loader
+            // that has nothing else driving this output yet: the loader's current
+            // selection becomes this output's value, so nothing has to be looked
+            // up and picked again.
+            let adopt = null;
+            if (connected && linkInfo && !app.configuringGraph
+                && Date.now() - (this._mykeeConfiguredAt || 0) > 1500) {
+                const already = slotTargets(this, slot).some((t) => t.supported && t.linkId !== linkInfo.id);
+                const info = already ? null : describeInput(
+                    this.graph?.getNodeById?.(linkInfo.target_id), linkInfo.target_slot);
+                if (info?.supported && typeof info.currentValue === "string" && info.currentValue) {
+                    adopt = { name: SLOTS[slot], value: info.currentValue, options: info.options };
+                }
+            }
             if (!connected) {
                 // Reset right away, ignoring the link being removed (it may
                 // still be listed while the disconnect is in progress).
@@ -1002,6 +1018,14 @@ app.registerExtension({
             // Defer: during a connect / disconnect the link list is not final yet.
             setTimeout(() => {
                 updateOutputSlot(this, slot);
+                if (adopt) {
+                    const hit = matchOption(adopt.options, adopt.value);
+                    if (hit !== null) {
+                        const state = readState(this);
+                        state.values[adopt.name] = hit;
+                        writeState(this, state);
+                    }
+                }
                 this.mykeeMtRender?.();
                 this.graph?.setDirtyCanvas?.(true, true);
             }, 0);
