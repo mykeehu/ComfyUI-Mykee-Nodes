@@ -31,6 +31,8 @@ _NODE_MODULES = [
     "mykee_xyz_plot",
     "mykee_model_template",
     "mykee_text_switch",
+    "mykee_text_splitter",
+    "mykee_text_analyzer",
     "mykee_text_injection",
     "mykee_size_switch",
     "mykee_wh_resizer",

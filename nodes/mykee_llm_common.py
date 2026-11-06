@@ -543,7 +543,29 @@ def answer_after_unfinished_thinking(clip, plain_make_prompts, used_kind, image,
         return ""
 
 
-def generation_error_hint(media_used):
+def _is_out_of_memory(error):
+    return ("OutOfMemory" in type(error).__name__
+            or "out of memory" in str(error).lower()
+            or "Allocation on device" in str(error))
+
+
+def generation_error_hint(media_used, error=None):
+    if error is not None and _is_out_of_memory(error):
+        # Give the memory back, the failed allocation can leave a lot cached.
+        try:
+            import gc
+            gc.collect()
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+        return ("The input is too long for the available memory. Generating needs "
+                "extra memory that grows with the length of the text (the prompt "
+                "plus the answer), and one big allocation did not fit - it fails "
+                "at once, so a VRAM graph may barely move. Use a shorter text or "
+                "split it into parts, lower max_length / thinking_budget, turn "
+                "thinking off, or unload other models to free VRAM.")
     hint = ("Make sure 'clip' here is a generation-capable chat model, not an "
             "encoder with no LM head wired up for generation in ComfyUI (e.g. "
             "Krea2's own Qwen3-VL conditioning encoder).")

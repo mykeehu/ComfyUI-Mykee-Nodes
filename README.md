@@ -117,6 +117,8 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee JSON Captioner](documents/json-captioner.md) | Captions images as MOSS-Image layout JSON (bounding boxes) or plain captions. |
 | [Mykee JSON BBOX Resizer](documents/json-bbox-resizer.md) | Re-maps the boxes of a MOSS layout JSON from one canvas size to another. |
 | [Mykee Text Switch/Batch](documents/text-switch-batch.md) | Up to 49 text fields with switch or batch output. |
+| [Mykee Text Splitter](documents/text-splitter.md) | Cuts a long text into token-sized chunks at sentence ends; auto size from a memory probe, optional .txt export. |
+| [Mykee Text Analyzer](documents/text-analyzer.md) | Answers a question about a long text: notes per chunk, then the final answer from the notes. |
 | [Mykee Before/After Text Injection](documents/before-after-text-injection.md) | Adds the same text before/after many texts at once. |
 
 ### Utils

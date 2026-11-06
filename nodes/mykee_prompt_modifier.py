@@ -902,7 +902,7 @@ class MykeePromptModifier:
                 except Exception as e:
                     edited_prompt = (
                         f"[generation failed: {type(e).__name__}: {e}]\n"
-                        + generation_error_hint(used_kind is not None)
+                        + generation_error_hint(used_kind is not None, e)
                     )
 
         print("=" * 70)

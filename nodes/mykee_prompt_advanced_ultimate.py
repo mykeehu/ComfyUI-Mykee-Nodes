@@ -832,7 +832,7 @@ class MykeePromptAdvancedUltimate:
         except Exception as e:
             return (
                 f"[{stage_label}: generation failed: {type(e).__name__}: {e}]\n"
-                + generation_error_hint(used_kind is not None),
+                + generation_error_hint(used_kind is not None, e),
                 "", used_kind,
             )
 

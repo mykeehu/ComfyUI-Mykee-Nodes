@@ -417,7 +417,7 @@ class MykeePromptAdvanced:
             except Exception as e:
                 reason_text = (
                     f"[generation failed: {type(e).__name__}: {e}]\n"
-                    + generation_error_hint(used_kind is not None)
+                    + generation_error_hint(used_kind is not None, e)
                 )
 
         print("=" * 70)
