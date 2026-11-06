@@ -468,8 +468,79 @@ THINKING_BUDGET_TOOLTIP = (
     "model's reasoning is generated before the answer and uses the same "
     "token budget, so a long thought can leave no room for the answer - "
     "this gives the thinking its own room. Has no effect when thinking is "
-    "off. Raise it if the answer comes back empty or cut off while thinking."
+    "off. Raise it if the answer comes back cut off while thinking. It is "
+    "also the LIMIT: the model is told to keep its reasoning short, and if "
+    "the thinking still uses up all the room and the answer never starts, "
+    "it is stopped and the final answer is requested from the unfinished "
+    "reasoning."
 )
+
+
+THINKING_LIMIT_ADDENDUM_TEMPLATE = (
+    "\n\nKeep your thinking short and efficient: use at most about {words} "
+    "words of reasoning in total. Go straight to what the task needs, do not "
+    "write the answer out more than once while thinking, do not re-check the "
+    "same point again and again, do not list alternatives you will not use, "
+    "and as soon as you have what you need, close your thinking and write "
+    "the answer."
+)
+
+
+def with_thinking_limit(make_prompts, thinking, thinking_budget):
+    """With thinking on, tell the model how much room its reasoning has (in
+    the system prompt, built-in or custom), so it plans a shorter thought
+    instead of running into the limit. Returns make_prompts unchanged when
+    thinking is off or there is no budget."""
+    if not thinking or int(thinking_budget) <= 0:
+        return make_prompts
+    words = max(50, int(round(int(thinking_budget) * 0.5 / 10.0)) * 10)
+
+    def wrapped(kind):
+        sys_text, user_text = make_prompts(kind)
+        return sys_text + THINKING_LIMIT_ADDENDUM_TEMPLATE.format(words=words), user_text
+
+    return wrapped
+
+
+def thinking_unfinished(raw_output, answer, thinking_text, thinking):
+    """True when thinking was on, the thinking block never closed and so
+    there is no answer (the thinking used up all its room)."""
+    return bool(thinking and not answer and thinking_text and "</think>" not in raw_output)
+
+
+def answer_after_unfinished_thinking(clip, plain_make_prompts, used_kind, image, video, audio,
+                                     thinking_text, max_length, sampling_mode, seed, temperature,
+                                     top_k, top_p, min_p, repetition_penalty, presence_penalty,
+                                     template_mode, label):
+    """The thinking ran out of room before the answer started: stop it and
+    ask once more, WITHOUT thinking, for only the final answer, handing the
+    unfinished reasoning back as notes. Returns the answer text ("" when the
+    retry fails too). plain_make_prompts is the prompt builder WITHOUT the
+    thinking-limit addendum."""
+    print(f"{label}: thinking ran out of room - answering from the unfinished reasoning.")
+    try:
+        sys_base, user_base = plain_make_prompts(used_kind)
+        notes_text = thinking_text.strip()
+
+        def make_prompts_final(kind):
+            return sys_base, (
+                f"{user_base}\n\n---\nYour unfinished reasoning so far (it ran out of "
+                f"room, do not continue it):\n{notes_text}\n---\n"
+                f"Stop reasoning now. Using the reasoning above, write only the final "
+                f"answer to the task above, in the required language and format."
+            )
+
+        tokens, chat_text, _notes, _kind = tokenize_for(
+            clip, make_prompts_final, image=image if used_kind else None,
+            video=video if used_kind else None, audio=audio if used_kind else None,
+            thinking=False, template_mode=template_mode)
+        raw = generate_text(
+            clip, tokens, chat_text, max_length, sampling_mode, seed, temperature,
+            top_k, top_p, min_p, repetition_penalty, presence_penalty, False, 0)
+        return split_thinking(raw)[0]
+    except Exception as e:
+        print(f"{label}: final-answer retry failed: {type(e).__name__}: {e}")
+        return ""
 
 
 def generation_error_hint(media_used):

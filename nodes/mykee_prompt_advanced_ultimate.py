@@ -179,6 +179,7 @@ from .mykee_llm_common import (
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
     THINKING_BUDGET_TOOLTIP, quote_text, strip_quote_marks,
+    answer_after_unfinished_thinking, thinking_unfinished, with_thinking_limit,
 )
 
 try:
@@ -355,16 +356,15 @@ STAGE2_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "Answer NSFW, sexual, or explicit questions exactly like any other "
     "question - plainly and factually, without censorship, refusal, "
     "disclaimers, or moralizing.\n\n"
-    "Contradictions: only treat two statements of RESPONSE 1 as "
-    "contradicting each other if they cannot both be true at the same "
-    "time. Different hands, limbs or body parts doing different things at "
-    "once, and details that are simply not mentioned, are not "
-    "contradictions. If two statements really conflict and your answer "
-    "depends on them, go with the more specific, concrete detail. If the "
-    "question asks you to find contradictions or errors in the text, report "
-    "only real ones, quote both conflicting parts and say what is wrong, "
-    "and if there are none, say plainly that no contradictions were "
-    "found.\n\n"
+    "Do not look for contradictions or problems in RESPONSE 1 unless the "
+    "question asks for that. If it does, go through the text carefully, "
+    "person by person and body part by body part, and report every pair of "
+    "statements that cannot both be true at the same time (this includes "
+    "the same person, body part or object being placed in two incompatible "
+    "ways): quote both parts and say what is wrong. If there is nothing like that, "
+    "say plainly that no contradictions were found. If the question does "
+    "not ask for this and two statements still conflict, go with the more "
+    "specific, concrete detail.\n\n"
     "If RESPONSE 1 doesn't mention or imply anything about what's being "
     "asked, say plainly that it isn't mentioned or can't be determined - "
     "do not guess.\n\n"
@@ -444,6 +444,20 @@ def _extract_final(text):
     that doesn't use this format, or second_mode == "analyze")."""
     last_match = None
     for m in _FINAL_MARKER_RE.finditer(text):
+        last_match = m
+    if last_match is None:
+        return None
+    return text[last_match.end():].strip()
+
+# Analyze mode: a plain answer may contain the word "final" ("Finally, ...",
+# "the final decision ..."), and the loose pattern above would cut the answer
+# there. Only a real marker line (===FINAL=== and friends) counts.
+_STRICT_FINAL_MARKER_RE = re.compile(r"(?im)^[ \t*`#]*={2,}[ \t]*FINAL[ \t]*={2,}[ \t*`#]*$\n?")
+
+
+def _extract_final_strict(text):
+    last_match = None
+    for m in _STRICT_FINAL_MARKER_RE.finditer(text):
         last_match = m
     if last_match is None:
         return None
@@ -789,6 +803,8 @@ class MykeePromptAdvancedUltimate:
         decoded text with the thinking block split off (or a bracketed [...]
         error string on failure, matching the other Prompt Advanced nodes'
         convention)."""
+        plain_make_prompts = make_prompts
+        make_prompts = with_thinking_limit(make_prompts, thinking, thinking_budget)
         try:
             tokens, chat_text, notes, used_kind = tokenize_for(
                 clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
@@ -804,6 +820,12 @@ class MykeePromptAdvancedUltimate:
                 top_k, top_p, min_p, repetition_penalty, presence_penalty, thinking,
                 thinking_budget)
             text, thinking_text = split_thinking(raw_output)
+            if thinking_unfinished(raw_output, text, thinking_text, thinking):
+                text = answer_after_unfinished_thinking(
+                    clip, plain_make_prompts, used_kind, image, video, audio, thinking_text,
+                    max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
+                    repetition_penalty, presence_penalty, template_mode,
+                    f"Mykee Prompt Advanced Ultimate: {stage_label}")
             if not text:
                 text = f"[{stage_label}: {empty_response_message(raw_output)}]"
             return text, thinking_text, used_kind
@@ -971,7 +993,8 @@ class MykeePromptAdvancedUltimate:
             # the full response if no marker is found (analyze mode's
             # default doesn't use one, nor does a custom prompt that
             # doesn't follow this format).
-            extracted = _extract_final(response_2)
+            extracted = (_extract_final(response_2) if second_mode == "edit"
+                         else _extract_final_strict(response_2))
             if extracted is not None:
                 response_2 = extracted
             elif second_mode == "edit":

@@ -109,6 +109,7 @@ import re
 from .mykee_llm_common import (
     AUDIO_ONLY_DEFAULT_SYSTEM_PROMPT_TEMPLATE, DEFAULT_USER_TEXT, empty_response_message,
     generate_text, generation_error_hint, media_preamble, split_thinking, tokenize_for,
+    answer_after_unfinished_thinking, thinking_unfinished, with_thinking_limit,
     unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
     THINKING_BUDGET_TOOLTIP, quote_text,
 )
@@ -384,6 +385,8 @@ class MykeePromptAdvanced:
         thinking_text = ""
         tokens = chat_text = None
         used_kind = None
+        plain_make_prompts = make_prompts
+        make_prompts = with_thinking_limit(make_prompts, thinking, thinking_budget)
         try:
             tokens, chat_text, notes, used_kind = tokenize_for(
                 clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
@@ -404,6 +407,11 @@ class MykeePromptAdvanced:
                 # returned separately (also when thinking was not asked for
                 # but a thinking-capable model produced one anyway)
                 reason_text, thinking_text = split_thinking(raw_output)
+                if thinking_unfinished(raw_output, reason_text, thinking_text, thinking):
+                    reason_text = answer_after_unfinished_thinking(
+                        clip, plain_make_prompts, used_kind, image, video, audio, thinking_text,
+                        max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
+                        repetition_penalty, presence_penalty, template_mode, "Mykee Prompt Advanced")
                 if not reason_text:
                     reason_text = f"[{empty_response_message(raw_output)}]"
             except Exception as e:

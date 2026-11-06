@@ -94,6 +94,7 @@ import re
 
 from .mykee_llm_common import (
     empty_response_message, generate_text, generation_error_hint, media_preamble,
+    answer_after_unfinished_thinking, thinking_unfinished, with_thinking_limit,
     split_thinking, tokenize_for, unload_clip as _unload_clip, TEMPLATE_MODES, TEMPLATE_MODE_TOOLTIP,
     THINKING_BUDGET_TOOLTIP, quote_text, strip_quote_marks,
 )
@@ -737,10 +738,11 @@ class MykeePromptModifier:
             return None
         sys_text = PATCH_SYSTEM_PROMPT_TEMPLATE.replace("{max_length}", str(max_length))
         user_text = _build_patch_user_text(split, edit_text)
+        plain_make_prompts = lambda kind: (sys_text, user_text)
         try:
             tokens, chat_text, _notes, _kind = tokenize_for(
-                clip, lambda kind: (sys_text, user_text), thinking=thinking,
-                template_mode=template_mode)
+                clip, with_thinking_limit(plain_make_prompts, thinking, thinking_budget),
+                thinking=thinking, template_mode=template_mode)
         except Exception as e:
             print(f"Mykee Prompt Modifier: patch method - tokenization failed ({type(e).__name__}: {e})")
             return None
@@ -754,7 +756,14 @@ class MykeePromptModifier:
             except Exception as e:
                 print(f"Mykee Prompt Modifier: patch method - generation failed ({type(e).__name__}: {e})")
                 return None
+            raw_all = raw
             raw, thinking_text = split_thinking(raw)
+            if thinking_unfinished(raw_all, raw, thinking_text, thinking):
+                raw = answer_after_unfinished_thinking(
+                    clip, plain_make_prompts, None, None, None, None, thinking_text,
+                    max_length, sampling_mode, seed + attempt * 7919, temperature, top_k, top_p,
+                    min_p, repetition_penalty, presence_penalty, template_mode,
+                    "Mykee Prompt Modifier (patch)")
             data, error = _parse_patch_json(raw, sentence_count)
             if data is None:
                 print(f"Mykee Prompt Modifier: patch attempt {attempt + 1} rejected - {error}")
@@ -833,6 +842,8 @@ class MykeePromptModifier:
                 return sys_text, user_text
 
             tokens = chat_text = None
+            plain_make_prompts = make_prompts
+            make_prompts = with_thinking_limit(make_prompts, thinking, thinking_budget)
             try:
                 tokens, chat_text, notes, used_kind = tokenize_for(
                     clip, make_prompts, image=image, video=video, audio=audio, thinking=thinking,
@@ -852,6 +863,12 @@ class MykeePromptModifier:
                     # the thinking block never stays in the result; it is
                     # returned separately
                     edited_prompt, thinking_text = split_thinking(raw_output)
+                    if thinking_unfinished(raw_output, edited_prompt, thinking_text, thinking):
+                        edited_prompt = answer_after_unfinished_thinking(
+                            clip, plain_make_prompts, used_kind, image, video, audio, thinking_text,
+                            max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
+                            repetition_penalty, presence_penalty, template_mode,
+                            "Mykee Prompt Modifier")
                     # Strip the required ANALYSIS line: the default system
                     # prompts force the model to visibly plan the edit before
                     # writing it out (native "thinking" isn't reliable on every

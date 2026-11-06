@@ -24,12 +24,29 @@ again), where the answer can be checked against concrete, written evidence.
 The built-in analyze prompt answers strictly from RESPONSE 1, in the language
 of the question (or the language the question asks for), without inventing
 anything and without refusing NSFW content. It does not hunt for
-contradictions on its own: two statements only conflict if they cannot both be
-true at once (different hands or body parts doing different things at the same
-time, or simply unmentioned details, are not contradictions). When the
-question itself asks for contradictions, it reports only real ones, quotes
-both parts, and says plainly that none were found if there are none. Lists
-are used only when the question asks for one.
+contradictions on its own. When the question itself asks for contradictions,
+it goes through the text person by person and body part by body part and
+reports every pair of statements that cannot both be true at once (quoting
+both parts), or says plainly that none were found. Lists are used only when
+the question asks for one.
+
+## Thinking limit (second_thinking)
+
+With thinking on, the model reasons first and then answers. `thinking_budget`
+(stage 1) / `second_thinking_budget` (stage 2) give the thinking extra room on
+top of `max_length`. If the thinking uses up all of that room and the answer
+never starts, the node does not return an empty result: it stops the thinking
+and asks the model once more, without thinking, for only the final answer,
+handing the unfinished reasoning back as notes. The unfinished reasoning is
+still shown in the `thinking_` output. So the budget is also the limit of how
+long the model may think.
+
+The model is also told about the limit: while thinking is on, a short
+instruction is added to that stage's system prompt (the built-in and a custom
+one alike) asking it to keep its reasoning to about half the budget in words,
+to go straight to the point, not to write the answer out several times while
+thinking and not to re-check the same point again and again. So a smaller
+budget makes the model think more briefly, not only cuts it off.
 
 ## Stage 1 - description
 

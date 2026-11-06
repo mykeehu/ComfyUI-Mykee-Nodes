@@ -95,7 +95,15 @@ same way by default, see **template_mode** below.
   of `max_length` while `thinking` is on. The reasoning is generated before
   the answer and uses the same token budget, so a long thought could leave
   no room for the answer; this gives the thinking its own room. No effect
-  with `thinking` off. Raise it if the answer comes back empty or cut off.
+  with `thinking` off. Raise it if the answer comes back cut off.
+  It is also the thinking **limit**: while `thinking` is on, the system prompt
+  (built-in or custom) gets a short instruction asking the model to keep its
+  reasoning to about half the budget in words and to go straight to the point.
+  If the thinking still uses up all the room and the answer never starts, the
+  node stops it and asks the model once more, without thinking, for only the
+  final answer, handing the unfinished reasoning back as notes (the unfinished
+  reasoning is still shown in the `thinking` output). The same applies to
+  Mykee Prompt Modifier and Mykee Prompt Advanced Ultimate.
 - **template_mode** (optional) - `auto` (default): ComfyUI's own tokenizer
   builds the model's chat template, so the node follows whatever templates
   ComfyUI knows (Gemma 4, Qwen3-VL, Qwen3.5, ...); if that fails for the
