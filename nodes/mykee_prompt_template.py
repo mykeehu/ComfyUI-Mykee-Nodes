@@ -21,6 +21,11 @@ Storage location, in order:
      ComfyUI's own built-in prompt templates live, so this pack's
      templates show up in a familiar spot.
 
+Templates may live in sub-folders: a template_name like "System-Prompt/meme"
+(or with a backslash) is the file <folder>/System-Prompt/meme.json. The list
+shows every template below the folder with its relative name, loading puts
+that relative name back into template_name, so Save writes to the same
+sub-folder it was loaded from. The sorting ignores upper/lower case.
 Each template is exactly one file: <template_name>.json, holding
 {"prompt": "...", "negative_prompt": "..."}. Older files saved before
 the negative-prompt field existed only have {"text": "..."} - those
@@ -90,7 +95,7 @@ _WINDOWS_RESERVED = {"CON", "PRN", "AUX", "NUL"} | {f"COM{i}" for i in range(1, 
 _MAX_NAME_LEN = 150  # plenty for a template name, well under any filesystem's path-length limit
 
 
-def _sanitize_template_name(name):
+def _sanitize_segment(name):
     name = (name or "").strip()
     # Drop control characters and every char either OS forbids in a file name.
     name = "".join(c for c in name if c not in _INVALID_CHARS and ord(c) >= 32)
@@ -100,6 +105,29 @@ def _sanitize_template_name(name):
         name = "_" + name
     name = name[:_MAX_NAME_LEN].strip().rstrip(". ")
     return name
+
+
+def _sanitize_template_name(name):
+    """A template name may carry sub-folders: "System-Prompt/meme" or
+    "System-Prompt\\meme" (both separators work, "/" is what comes back).
+    Every part is cleaned like a file name; empty parts, "." and ".." are
+    dropped, so a name can never point outside the templates folder."""
+    parts = str(name or "").replace("\\", "/").split("/")
+    clean = [_sanitize_segment(p) for p in parts]
+    clean = [p for p in clean if p and p not in (".", "..")]
+    return "/".join(clean)
+
+
+def _split_name(name):
+    """"a/b/c" -> (["a", "b"], "c")."""
+    parts = name.split("/")
+    return parts[:-1], parts[-1]
+
+
+def _sort_key(rel):
+    # Case-insensitive ("apple" next to "Apple", not after every capital);
+    # the original spelling only breaks exact ties.
+    return (rel.casefold(), rel)
 
 
 def _default_templates_dir():
@@ -135,16 +163,25 @@ def _templates_dir(custom_path=None):
 
 
 def _template_path(directory, name):
-    return os.path.join(directory, f"{name}.json")
+    folders, base = _split_name(name)
+    return os.path.join(directory, *folders, f"{base}.json")
 
 
 def _list_template_names(directory):
+    """Every template below `directory`, sub-folders included, as relative
+    names with "/" ("System-Prompt/meme"), sorted without regard to case."""
+    names = []
     try:
-        return sorted(
-            os.path.splitext(f)[0] for f in os.listdir(directory) if f.lower().endswith(".json")
-        )
-    except FileNotFoundError:
+        for root, dirs, files in os.walk(directory):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            rel_root = os.path.relpath(root, directory)
+            prefix = "" if rel_root == "." else rel_root.replace(os.sep, "/") + "/"
+            for f in files:
+                if f.lower().endswith(".json") and not f.startswith("."):
+                    names.append(prefix + os.path.splitext(f)[0])
+    except OSError:
         return []
+    return sorted(names, key=_sort_key)
 
 
 def _load_template(directory, name):
@@ -174,6 +211,7 @@ def _load_template(directory, name):
 
 def _save_template(directory, name, prompt, negative_prompt):
     p = _template_path(directory, name)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"prompt": prompt, "negative_prompt": negative_prompt}, f, indent=2, ensure_ascii=False)
@@ -190,15 +228,17 @@ def _find_template_image(directory, name):
     """Full path of the picture that belongs to template `name`, or None."""
     if not name:
         return None
+    folders, base = _split_name(name)
+    directory = os.path.join(directory, *folders)
     for ext in _IMAGE_EXTS:  # exact-case match first
-        p = os.path.join(directory, name + ext)
+        p = os.path.join(directory, base + ext)
         if os.path.isfile(p):
             return p
     try:  # then a case-insensitive one (Photo.PNG, name.JPG ...)
-        wanted = name.lower()
+        wanted = base.lower()
         for f in sorted(os.listdir(directory)):
-            base, ext = os.path.splitext(f)
-            if base.lower() == wanted and ext.lower() in _IMAGE_EXTS:
+            stem, ext = os.path.splitext(f)
+            if stem.lower() == wanted and ext.lower() in _IMAGE_EXTS:
                 return os.path.join(directory, f)
     except OSError:
         pass
@@ -257,7 +297,9 @@ class MykeePromptTemplate:
             negative_prompt_text = ""
         # Handy as a file name prefix: cleaned like the saved file name, and
         # ComfyUI's own default prefix when nothing is typed.
-        name_out = _sanitize_template_name(template_name) or "ComfyUI"
+        # Only the file part: a sub-folder in a filename prefix would make the
+        # Save node create folders.
+        name_out = _split_name(_sanitize_template_name(template_name))[1] or "ComfyUI"
         return (positive_prompt_text, negative_prompt_text, name_out)
 
 

@@ -165,8 +165,10 @@ const RESERVED_NAMES = new Set(["CON", "PRN", "AUX", "NUL",
     ...Array.from({ length: 9 }, (_, i) => `LPT${i + 1}`)]);
 
 function cleanNameForFile(name) {
-    // Same rules as the backend's template file name sanitizing.
-    let out = Array.from(String(name ?? "").trim())
+    // Same rules as the backend's template name sanitizing; only the file
+    // part is used (a sub-folder in a filename prefix would create folders).
+    const base = String(name ?? "").replace(/\\/g, "/").split("/").map((p) => p.trim()).filter(Boolean).pop() ?? "";
+    let out = Array.from(base)
         .filter((c) => !INVALID_NAME_CHARS.includes(c) && c.charCodeAt(0) >= 32).join("");
     out = out.trim().replace(/[. ]+$/, "").trim();
     if (RESERVED_NAMES.has(out.toUpperCase())) out = "_" + out;
@@ -341,7 +343,7 @@ app.registerExtension({
             // been read from disk; otherwise it is only shown if a template
             // of that name actually exists.
             const syncPicker = (optimistic = false) => {
-                const name = (nameWidget.value || "").trim();
+                const name = (nameWidget.value || "").trim().replace(/\\/g, "/");
                 const known = existingNames.includes(name);
                 listWidget.value = name && (known || optimistic) ? name : "";
                 this.setDirtyCanvas(true, true);

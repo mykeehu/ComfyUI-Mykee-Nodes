@@ -17,8 +17,19 @@ looked at the fine details, and there is no hidden reasoning to catch the
 mistake afterwards - the generated tokens *are* the only reasoning. Splitting
 the job forces stage 1 to write the visual evidence down as real, visible
 text; stage 2 then works purely from that text (it never sees the image
-again), where a "check for consistency" instruction has something concrete
-to check against.
+again), where the answer can be checked against concrete, written evidence.
+
+## Stage 2 default prompt (analyze)
+
+The built-in analyze prompt answers strictly from RESPONSE 1, in the language
+of the question (or the language the question asks for), without inventing
+anything and without refusing NSFW content. It does not hunt for
+contradictions on its own: two statements only conflict if they cannot both be
+true at once (different hands or body parts doing different things at the same
+time, or simply unmentioned details, are not contradictions). When the
+question itself asks for contradictions, it reports only real ones, quotes
+both parts, and says plainly that none were found if there are none. Lists
+are used only when the question asks for one.
 
 ## Stage 1 - description
 
@@ -80,6 +91,13 @@ the marker, `tags_1` stays empty.)
   stage, everything passes through, no VRAM load.
 - **system_prompt** - stage 1's system prompt (empty = built-in default).
 - **generate_tags, max_tags** - see above.
+- **stage1_passthrough** - text-only mode: stage 1 is skipped completely and
+  `prompt` goes to stage 2 unchanged as RESPONSE 1 (no model call, no
+  paraphrase, so also nothing that can refuse or shorten the text). Off
+  (default): stage 1 reads and paraphrases the prompt as before. Ignored when
+  an image, video or audio is connected, because stage 1 has to look at it.
+  Use it when the prompt already is the text stage 2 should work with. It is
+  the last widget of the node, so saved workflows keep their values.
 - **max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
   repetition_penalty, presence_penalty, thinking** - stage 1's generation
   controls (same meaning as in Mykee Prompt Advanced).

@@ -20,6 +20,20 @@ Storage location:
 - If `custom_path` is filled in, that folder is used instead (created if
   it doesn't exist yet).
 
+Sub-folders
+-----------
+
+Templates can be organized in sub-folders. The "Existing templates" list
+shows every template below the folder with its relative name, e.g.
+`System-Prompt/meme`. Loading one puts that relative name into
+`template_name`, so **Save writes back to the same sub-folder**. To save into
+a (new) folder, type it into `template_name`: `System-Prompt/meme` (a
+backslash works too; missing folders are created). Names can't point outside
+the templates folder (`..` and absolute paths are dropped). A preview image
+belongs to the template next to it, in the same sub-folder. The list is
+sorted without regard to upper/lower case; folders starting with a dot are
+skipped.
+
 Each template file holds `{"prompt": "...", "negative_prompt": "..."}`.
 Older files saved before the negative-prompt field existed
 (`{"text": "..."}`) still load fine - as a positive prompt with an
@@ -94,7 +108,9 @@ Outputs:
 - **template_name** (STRING) - the current `template_name` text, cleaned
   the same way as a saved file name (no characters invalid in a file name),
   so it can feed a filename prefix directly. Empty `template_name` gives
-  `ComfyUI`, the standard default prefix.
+  `ComfyUI`, the standard default prefix. Only the file part of the name is
+  used (`System-Prompt/meme` gives `meme`), so a Save node doesn't create
+  folders.
 
   Renaming a template does **not** regenerate the image: when the prompt is
   queued, the name is delivered as a plain constant to whatever is wired to

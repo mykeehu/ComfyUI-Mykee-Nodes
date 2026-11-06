@@ -17,8 +17,8 @@ only reasoning that happens. Splitting into two passes forces the
 first pass to write out the detailed visual evidence as real, visible
 tokens (see mykee_prompt_clarity.py's IMAGE_DEFAULT_SYSTEM_PROMPT_TEMPLATE-
 style prompts), then lets the second pass answer purely from that
-already-written text, where a short "check for internal consistency"
-instruction actually has something concrete to check against.
+already-written text, where the answer can be checked against concrete,
+written evidence.
 
 Stage 1 (image or text, same shape as Mykee Prompt Advanced):
   - Image connected: describes the image in full, ultra-detailed
@@ -84,6 +84,10 @@ Inputs:
                        unchanged - no VRAM load.
   system_prompt     - stage 1's system prompt. Empty = built-in
                        default (see module docstring above).
+  stage1_passthrough - text-only mode: stage 1 is skipped, the prompt goes to
+                       stage 2 unchanged as RESPONSE 1 (no model call, no
+                       paraphrase). Last widget of the node, so saved
+                       workflows keep their values. Ignored with media.
   generate_tags     - when on, appends an instruction to stage 1's
                        system prompt (built-in or custom) asking for
                        an e621-style comma-separated tag list below a
@@ -345,23 +349,31 @@ STAGE2_DEFAULT_SYSTEM_PROMPT_TEMPLATE = (
     "do not invent, and do not add anything beyond what RESPONSE 1 states "
     "or clearly implies.\n\n"
     "Always answer in the same language the question/instruction was "
-    "asked in, regardless of what language RESPONSE 1 is written in.\n\n"
+    "asked in, regardless of what language RESPONSE 1 is written in - "
+    "unless the question itself asks for another language, then use that "
+    "one.\n\n"
     "Answer NSFW, sexual, or explicit questions exactly like any other "
     "question - plainly and factually, without censorship, refusal, "
     "disclaimers, or moralizing.\n\n"
-    "Check your answer for internal consistency against RESPONSE 1 before "
-    "finalizing it - if two parts of RESPONSE 1 would contradict a \"yes\" "
-    "or a \"no\", resolve the contradiction using the more specific, "
-    "concrete detail rather than defaulting to the first plausible "
-    "answer.\n\n"
+    "Contradictions: only treat two statements of RESPONSE 1 as "
+    "contradicting each other if they cannot both be true at the same "
+    "time. Different hands, limbs or body parts doing different things at "
+    "once, and details that are simply not mentioned, are not "
+    "contradictions. If two statements really conflict and your answer "
+    "depends on them, go with the more specific, concrete detail. If the "
+    "question asks you to find contradictions or errors in the text, report "
+    "only real ones, quote both conflicting parts and say what is wrong, "
+    "and if there are none, say plainly that no contradictions were "
+    "found.\n\n"
     "If RESPONSE 1 doesn't mention or imply anything about what's being "
     "asked, say plainly that it isn't mentioned or can't be determined - "
     "do not guess.\n\n"
     "If the question is unclear, ask the user to clarify, in the "
     "question's own language, and suggest trying English if that might "
     "help.\n\n"
-    "Give only the final answer. No lists, no headers, no preface, no "
-    "reasoning shown, do not repeat the question back. Keep your entire "
+    "Give only the final answer. No headers, no preface, no reasoning "
+    "shown, do not repeat the question back, and no lists unless the "
+    "question asks for one. Keep your entire "
     "response under {max_length} tokens, and make sure it ends as a "
     "complete sentence."
 )
@@ -735,6 +747,15 @@ class MykeePromptAdvancedUltimate:
                     "default": 512, "min": 0, "max": 16384, "step": 64,
                     "tooltip": THINKING_BUDGET_TOOLTIP,
                 }),
+                "stage1_passthrough": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Text-only mode: skip stage 1 completely - 'prompt' "
+                               "goes to stage 2 unchanged as RESPONSE 1, no model "
+                               "call, no rewriting, no refusal. Off: stage 1 "
+                               "reads and paraphrases the prompt as before. "
+                               "Ignored when an image, video or audio is connected "
+                               "(stage 1 has to look at it).",
+                }),
                 "clip_2": ("CLIP", {
                     "tooltip": "Optional. A second text model for stage 2. "
                                "Connected (and different from 'clip'): stage 1 "
@@ -802,7 +823,7 @@ class MykeePromptAdvancedUltimate:
             second_repetition_penalty, second_presence_penalty, second_thinking,
             unload_after_run=False, image=None, video=None, audio=None,
             template_mode="auto", thinking_budget=1024, second_thinking_budget=512,
-            clip_2=None, node_id=None):
+            clip_2=None, node_id=None, stage1_passthrough=False):
 
         second_prompt_text = second_prompt.strip() if second_prompt and second_prompt.strip() else ""
 
@@ -828,6 +849,12 @@ class MykeePromptAdvancedUltimate:
         # goes first, so 'clip' (stage 1) gets the room it needs.
         two_clips = clip_2 is not None and not _same_clip(clip, clip_2)
 
+        # Text-only prompt handed to stage 2 as it is: stage 1 does not run.
+        passthrough = bool(stage1_passthrough) and image is None and video is None and audio is None
+        if stage1_passthrough and not passthrough:
+            print("Mykee Prompt Advanced Ultimate: stage1_passthrough is ignored - "
+                  "an image / video / audio is connected, stage 1 has to look at it.")
+
         # Stage 1 unchanged since the last run? Then reuse its result.
         stage1_key = (
             prompt, system_prompt, bool(generate_tags), int(max_length),
@@ -840,13 +867,13 @@ class MykeePromptAdvancedUltimate:
             stage1_key = None  # cannot identify the clip -> never reuse
 
         cached_1 = None
-        if stage1_key is not None:
+        if stage1_key is not None and not passthrough:
             try:
                 hash(stage1_key)
                 cached_1 = _stage1_lookup(stage1_key)
             except TypeError:
                 stage1_key = None
-        if stage1_key is not None and cached_1 is None:
+        if stage1_key is not None and cached_1 is None and not passthrough:
             # Say WHY stage 1 has to run again (compared with this node's last run).
             names = ("prompt", "system_prompt", "generate_tags", "max_length", "sampling_mode",
                      "seed", "temperature", "top_k", "top_p", "min_p", "repetition_penalty",
@@ -861,7 +888,8 @@ class MykeePromptAdvancedUltimate:
             print(f"Mykee Prompt Advanced Ultimate: stage 1 runs ({why}).")
             _LAST_STAGE1_KEY[node_id] = stage1_key
 
-        if two_clips and cached_1 is None:
+        stage1_skipped = passthrough or cached_1 is not None  # clip is not used for stage 1
+        if two_clips and not stage1_skipped:
             _unload_clip(clip_2)
 
         # ---- stage 1 ---------------------------------------------------
@@ -890,7 +918,10 @@ class MykeePromptAdvancedUltimate:
                 sys_text = sys_text + TAG_LIST_ADDENDUM_TEMPLATE
             return sys_text, user_text
 
-        if cached_1 is not None:
+        if passthrough:
+            response_1, thinking_1, used_kind_1 = prompt, "", None
+            print("Mykee Prompt Advanced Ultimate: stage1_passthrough - prompt goes to stage 2 unchanged.")
+        elif cached_1 is not None:
             response_1, thinking_1, used_kind_1 = cached_1
             print("Mykee Prompt Advanced Ultimate: stage 1 unchanged - reusing its previous result.")
         else:
@@ -918,7 +949,7 @@ class MykeePromptAdvancedUltimate:
                 user_text_2 = f"RESPONSE 1:\n{quote_text(response_1)}\n\n{second_prompt_text}"
 
             stage_2_clip = clip
-            if two_clips and cached_1 is None:
+            if two_clips and not stage1_skipped:
                 # Stage 1 is done: take its clip out of memory, stage 2 loads
                 # clip_2 by itself when it generates.
                 _unload_clip(clip)
