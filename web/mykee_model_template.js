@@ -689,6 +689,7 @@ function setupNotes(node) {
         const delta = next - notesHeight;
         if (delta === 0 && !shrink) return;
         notesHeight = next;
+        measuredContent = editing ? area.scrollHeight : view.scrollHeight;
         if (shrink) {
             fitHeight(node, true);
         } else {
@@ -760,6 +761,18 @@ function setupNotes(node) {
             requestAnimationFrame(() => measure(false));
         }).observe(box);
     }
+    // The text itself can change size without the box changing: web fonts that
+    // arrive late, a node that was hidden while the workflow loaded, ... Measure
+    // again when the content turns out taller or shorter than what was measured.
+    let measuredContent = 0;
+    const contentSize = () => (editing ? area.scrollHeight : view.scrollHeight);
+    node.mykeeMtRemeasure = () => {
+        const size = contentSize();
+        if (!box.clientWidth || size === measuredContent) return;
+        measuredContent = size;
+        measure(false);
+    };
+    document.fonts?.ready?.then(() => node.mykeeMtRemeasure?.());
 
     // Pulls the notes from the stored state into the UI (after a workflow
     // load, a template load, ...). An empty note opens in edit mode.
@@ -982,11 +995,19 @@ app.registerExtension({
             // the wrong folder until Reload is pressed by hand.
             this._mykeeRefreshTemplateList?.();
             // Target nodes may not exist yet while the graph is loading.
-            setTimeout(() => {
-                for (let slot = 0; slot < SLOTS.length; slot++) updateOutputSlot(this, slot);
-                this.mykeeMtRender?.(false);
-                this.mykeeMtNotesSync?.(false);
-            }, 50);
+            // The node's height always follows its content after a load (grows AND
+            // shrinks): measured once the links exist, then again while the layout
+            // and the fonts settle, so the notes never end up cut off at the bottom
+            // or with a gap below them.
+            const settle = (first) => {
+                if (first) for (let slot = 0; slot < SLOTS.length; slot++) updateOutputSlot(this, slot);
+                this.mykeeMtRender?.(true);
+                this.mykeeMtNotesSync?.(true);
+                this.mykeeMtRemeasure?.();
+            };
+            setTimeout(() => settle(true), 50);
+            setTimeout(() => settle(false), 400);
+            setTimeout(() => this.mykeeMtRemeasure?.(), 1500);
             return ret;
         };
 

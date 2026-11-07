@@ -27,6 +27,10 @@ const MAX_TEXTS = 49;
 const NAME_RE = /^text_(\d+)$/;
 const ROW_HEIGHT = 62;
 const TOOLBAR_HEIGHT = 30;
+const MIN_AREA_HEIGHT = 48;                 // CSS min-height of a text field
+const ROW_CHROME = ROW_HEIGHT - MIN_AREA_HEIGHT;
+const MAX_AREA_HEIGHT = 4000;
+const HEIGHTS_PROP = "mykee_ts_heights";    // node.properties: { "<field>": <textarea height px> }
 
 function widget(node, name) {
     return node.widgets?.find((w) => w.name === name);
@@ -39,6 +43,32 @@ function isBatch(node) {
 function textCount(node) {
     const n = Math.round(Number(widget(node, "text_count")?.value ?? 2));
     return Number.isFinite(n) ? Math.max(0, Math.min(MAX_TEXTS, n)) : 2;
+}
+
+// Heights the user dragged the text fields to. They live in node.properties
+// (saved with the workflow) because the fields are rebuilt whenever the mode,
+// the field count or a connection changes.
+function readHeights(node) {
+    const raw = node.properties?.[HEIGHTS_PROP];
+    const result = {};
+    if (raw && typeof raw === "object") {
+        for (const [key, value] of Object.entries(raw)) {
+            const index = Number(key);
+            const height = Number(value);
+            if (Number.isInteger(index) && index >= 1 && index <= MAX_TEXTS && Number.isFinite(height)) {
+                result[index] = Math.max(MIN_AREA_HEIGHT, Math.min(MAX_AREA_HEIGHT, Math.round(height)));
+            }
+        }
+    }
+    return result;
+}
+
+function saveHeight(node, index, height) {
+    const heights = readHeights(node);
+    if (height <= MIN_AREA_HEIGHT + 1) delete heights[index];
+    else heights[index] = Math.min(MAX_AREA_HEIGHT, Math.round(height));
+    node.properties = node.properties || {};
+    node.properties[HEIGHTS_PROP] = heights;
 }
 
 function readState(node) {
@@ -193,11 +223,28 @@ function setupNode(node) {
     panel.className = "mykee-ts";
     const dom = node.addDOMWidget("texts_panel", "MYKEE_TEXT_PANEL", panel, {
         serialize: false,
-        getMinHeight: () => (isBatch(node) ? TOOLBAR_HEIGHT : 0) + Math.max(1, textCount(node)) * ROW_HEIGHT + 8,
+        getMinHeight: () => {
+            const heights = readHeights(node);
+            let total = (isBatch(node) ? TOOLBAR_HEIGHT : 0) + 8;
+            for (let i = 1; i <= Math.max(1, textCount(node)); i++) {
+                total += Math.max(ROW_HEIGHT, (heights[i] || 0) + ROW_CHROME);
+            }
+            return total;
+        },
     });
     dom.serialize = false;
 
+    let observers = [];
+    let fitTimer = null;
+    const fitSoon = () => {
+        clearTimeout(fitTimer);
+        fitTimer = setTimeout(() => fitHeight(node), 50);
+    };
+
     const render = () => {
+        observers.forEach((o) => o.disconnect());
+        observers = [];
+        const heights = readHeights(node);
         const state = readState(node);
         const count = textCount(node);
         const batch = isBatch(node);
@@ -247,6 +294,20 @@ function setupNode(node) {
                     state.texts[i - 1] = area.value;
                     save();
                 });
+            }
+
+            if (heights[i]) area.style.height = `${heights[i]}px`;
+            if (typeof ResizeObserver !== "undefined") {
+                // A drag on the resize handle sets an inline height; remember it.
+                const observer = new ResizeObserver(() => {
+                    if (!area.style.height || !area.offsetHeight) return;
+                    const height = area.offsetHeight;
+                    if (Math.abs(height - (readHeights(node)[i] || MIN_AREA_HEIGHT)) <= 1) return;
+                    saveHeight(node, i, height);
+                    fitSoon();
+                });
+                observer.observe(area);
+                observers.push(observer);
             }
 
             const pick = document.createElement("label");
