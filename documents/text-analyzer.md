@@ -35,7 +35,12 @@ It works in two rounds, like [Mykee Prompt Advanced Ultimate](prompt-advanced-ul
 - **note_mode**
   - **rolling** (default) - every chunk is read together with the notes of the
     earlier ones, so clues in different places can be connected. The notes are
-    condensed by the model when they grow past `notes_max_tokens`.
+    condensed by the model when they grow past `notes_max_tokens`: the model regroups
+    them by topic and merges details that show the same thing. It aims at
+    `notes_max_tokens` minus `max_length`, so the next chunk's notes still fit, and
+    tries once more if the first pass stays too long. A condensed text that was cut off
+    by the model's own limit is discarded and the notes are kept as they were
+    (the status says so).
   - **independent** - every chunk is read on its own; the notes are only put together
     for round 2.
 - **notes_system_prompt** - round 1's system prompt (empty = built-in default for the
@@ -46,8 +51,9 @@ It works in two rounds, like [Mykee Prompt Advanced Ultimate](prompt-advanced-ul
   the Ultimate node. **thinking_budget** is the room for thinking.
 - **second_system_prompt** and the **second_...** settings - round 2 (the answer),
   with its own seed control and **second_thinking_budget**.
-- **notes_max_tokens** - rolling mode: size at which the notes are condensed; also the
-  size notes are condensed to when they are too long for round 2.
+- **notes_max_tokens** - rolling mode: size at which the notes are condensed (they are
+  condensed down to about this value minus `max_length`); also the size notes are
+  condensed to when they are too long for round 2.
 - **input_token_limit** - a chunk (or typed text) longer than this is refused with a
   hint to use the splitter; the node never cuts text itself. 0 = no check.
 - **clip_2** (optional) - a different model for round 2; `clip` is taken out of memory
