@@ -22,6 +22,9 @@ It works in two rounds, like [Mykee Prompt Advanced Ultimate](prompt-advanced-ul
 
 - **clip** - the model for the notes (and the answer, unless clip_2 is connected).
 - **question** - what you want to know. The notes are written *for this question*.
+- **context** - optional background you know to be true, e.g. who is who and how the
+  people are related. It is given to every call as reliable `BACKGROUND`, and helps the model
+  not to mix up characters. Changing it reads the text again.
 - **text** - the text, if it is short enough for the model. Can also be connected.
 - **text_in** (socket) - the text to analyse: a single text or the splitter's list of
   chunks. While it is connected, the text box is hidden and ignored.
@@ -36,8 +39,8 @@ It works in two rounds, like [Mykee Prompt Advanced Ultimate](prompt-advanced-ul
   - **independent** - every chunk is read on its own; the notes are only put together
     for round 2.
 - **notes_system_prompt** - round 1's system prompt (empty = built-in default for the
-  note_mode). Its user turn is labelled `QUESTION`, `NOTES SO FAR` (rolling only) and
-  `TEXT PART`. A chunk with nothing relevant should be answered with `NONE`.
+  note_mode). Its user turn is labelled `BACKGROUND` (if given), `QUESTION`, `NOTES SO FAR` (rolling only) and
+  `TEXT CHUNK`. A chunk with nothing relevant should be answered with `NONE`.
 - **max_length, sampling_mode, seed, temperature, top_k, top_p, min_p,
   repetition_penalty, presence_penalty, thinking** - round 1 (per chunk), same as on
   the Ultimate node. **thinking_budget** is the room for thinking.
@@ -56,7 +59,7 @@ It works in two rounds, like [Mykee Prompt Advanced Ultimate](prompt-advanced-ul
 
 - **response_1** - the notes.
 - **response_2** - the final answer.
-- **status** - parts, parts with notes, what was reused, what happened per part.
+- **status** - chunks, chunks with notes, what was reused, what happened per chunk.
 - **thinking_1**, **thinking_2** - the thinking of the two rounds (thinking on).
 
 The node also shows these in boxes with copy buttons. A progress bar counts the
@@ -79,7 +82,7 @@ The memory lasts until ComfyUI is restarted.
 
 ## Tabs
 
-Under the fields you use all the time (clip, question, text, note_mode and the two seeds)
+Under the fields you use all the time (clip, question, context, text, note_mode and the two seeds)
 the settings sit on four tabs, so the node stays short:
 
 - **Notes** - round 1: its system prompt, max_length, sampling, penalties, thinking.

@@ -116,7 +116,7 @@ const TAB_SIZE_PROP = "mykee_tab_heights"; // node height per tab, saved with th
 const DEFAULT_TAB = "outputs";
 const TAB_BAR_NAME = "_mykee_tabs";
 const TAB_BAR_HEIGHT = 30;
-const ALWAYS_VISIBLE = ["question", "text", "note_mode", "seed", "second_seed", "second_seed_control"];
+const ALWAYS_VISIBLE = ["question", "context", "text", "note_mode", "seed", "second_seed", "second_seed_control"];
 const TAB_OF = {};
 for (const n of ["max_length", "sampling_mode", "temperature", "top_k", "top_p", "min_p",
     "repetition_penalty", "presence_penalty", "thinking", "thinking_budget", "notes_system_prompt"]) TAB_OF[n] = "notes";

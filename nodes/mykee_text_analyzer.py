@@ -68,53 +68,80 @@ LOG = "Mykee Text Analyzer:"
 # --------------------------------------------------------------------------
 
 NOTES_SYSTEM_ROLLING = (
-    "You are reading a long text one part at a time so that a question about it can be "
+    "You are reading a long text one chunk at a time so that a question about it can be "
     "answered afterwards. Each turn gives you the QUESTION, the NOTES SO FAR taken from the "
-    "earlier parts (missing for the first part) and the next TEXT PART. Read the text part "
-    "carefully and write down, as short plain notes, everything in it that helps to answer "
+    "earlier chunks (missing for the first chunk) and the next TEXT CHUNK. Read the text chunk "
+    "carefully and write down, as short plain notes, the points in it that help to answer "
     "the question: statements that answer it directly, and also indirect evidence such as "
     "hints, circumstances, changes, things people say or do, and details that point toward an "
     "answer when taken together with the earlier notes, even when the text never states the "
     "answer outright. Keep what the text says apart from what you conclude from it, and label "
-    "your own conclusions as conclusions. Use the earlier notes only as context: do not repeat "
-    "them, write only what this part adds, and say so when this part corrects or contradicts "
-    "an earlier note. Never invent anything the text does not support. Write the notes in the "
-    "language of the text. If the text part holds nothing that bears on the question, reply "
+    "your own conclusions as conclusions. Build on the earlier notes: connect what this chunk "
+    "shows with what was found before, say where it confirms, extends, refines or contradicts an "
+    "earlier note, and point out patterns and changes over time, but do not copy the earlier "
+    "notes word for word. Keep the people apart: attribute every note to the exact name the text uses for that "
+    "person, treat different names as different people unless the text itself says they are the "
+    "same person, and when a text chunk is about someone other than the person the question asks "
+    "about, either leave it out or say clearly who it is about. A BACKGROUND section, if there is "
+    "one, comes from the user and is reliable: use it, in particular to tell who is who. "
+    "Write the notes in your own words as compact, connected points that say who did or said what and what it shows for the question, with a few short quotations where the exact wording is itself the evidence; do not transcribe long dialogue or retell the scene step by step. Details that show the same thing belong in one point. "
+    "Never invent anything the text does not support. Write the notes in the "
+    "language of the text. Finish with one or two sentences that say what this chunk changes or "
+    "confirms in the overall picture for the question. Do not list what the chunk does not "
+    "contain. If the text chunk holds nothing at all that bears on the question, reply "
     "with the single word NONE and nothing else."
 )
 
 NOTES_SYSTEM_INDEPENDENT = (
-    "You are reading one part of a long text so that a question about the whole text can be "
-    "answered afterwards. Each turn gives you the QUESTION and one TEXT PART; the other parts "
+    "You are reading one chunk of a long text so that a question about the whole text can be "
+    "answered afterwards. Each turn gives you the QUESTION and one TEXT CHUNK; the other chunks "
     "are not visible to you, so note everything that could matter even when it is only a "
-    "fragment of the picture. Read the text part carefully and write down, as short plain "
-    "notes, everything in it that helps to answer the question: statements that answer it "
+    "fragment of the picture. Read the text chunk carefully and write down, as short plain "
+    "notes, the points in it that help to answer the question: statements that answer it "
     "directly, and also indirect evidence such as hints, circumstances, changes, things people "
     "say or do, even when the text never states the answer outright. Keep what the text says "
     "apart from what you conclude from it, and label your own conclusions as conclusions. "
+    "Keep the people apart: attribute every note to the exact name the text uses for that "
+    "person, treat different names as different people unless the text itself says they are the "
+    "same person, and when a text chunk is about someone other than the person the question asks "
+    "about, either leave it out or say clearly who it is about. A BACKGROUND section, if there is "
+    "one, comes from the user and is reliable: use it, in particular to tell who is who. "
+    "Write the notes in your own words as compact, connected points that say who did or said what and what it shows for the question, with a few short quotations where the exact wording is itself the evidence; do not transcribe long dialogue or retell the scene step by step. Details that show the same thing belong in one point. "
     "Never invent anything the text does not support. Write the notes in the language of the "
-    "text. If the text part holds nothing that bears on the question, reply with the single "
+    "text. Finish with one or two sentences that say what this chunk shows for the question. "
+    "Do not list what the chunk does not contain. "
+    "If the text chunk holds nothing that bears on the question, reply with the single "
     "word NONE and nothing else."
 )
 
 COMPACT_SYSTEM = (
     "You will receive a QUESTION and a set of NOTES that were taken while reading a long text "
-    "part by part. Rewrite the notes more compactly so that they stay as useful as possible "
-    "for answering the question: keep every fact and every piece of indirect evidence that "
-    "bears on it together with the part numbers it comes from, merge duplicates, drop what "
-    "does not matter for the question, and keep conclusions marked as conclusions. Do not add "
-    "anything new. Write in the language of the notes and output only the rewritten notes."
+    "chunk by chunk. Rewrite them into one shorter, well organized set of notes that stays as "
+    "useful as possible for answering the question. Group the notes by topic under short "
+    "headings instead of keeping them chunk by chunk, fold details that show the same thing into "
+    "one point, and where later notes confirm, extend, refine or contradict earlier ones, say so "
+    "and say how the picture develops. Keep every distinct finding and piece of indirect "
+    "evidence that bears on the question, with the chunk numbers it comes from, put the "
+    "points in your own words, turn long quoted dialogue and retold scenes into the point they "
+    "make, and keep a quotation only where its exact wording is decisive. Drop what does not "
+    "matter for the question and remarks that a chunk holds nothing relevant. End with a short "
+    "conclusions section that is marked as conclusions. Keep every note attached to the name it "
+    "was written with and never merge or rename people. Do not add anything new. Write in the "
+    "language of the notes and output only the rewritten notes."
 )
 
 FINAL_SYSTEM = (
-    "You will receive a QUESTION and NOTES that were collected part by part from a long text. "
+    "You will receive a QUESTION and NOTES that were collected chunk by chunk from a long text. "
     "Answer the question using only the notes. When the notes state the answer, give it "
     "plainly. When they do not state it but contain evidence that points toward it, give the "
     "most likely answer, say clearly that it is an inference and name the evidence it rests "
     "on. When the notes do not give enough to answer, say that the text does not tell it "
     "instead of guessing. When two notes disagree, say so and prefer the better supported "
-    "one, explaining why. Answer in the language of the question, concisely, without "
-    "repeating the notes."
+    "one, explaining why. Treat different names as different people unless the notes say "
+    "explicitly that they are the same person, never carry what the notes say about one person "
+    "over to another, and when the notes do not cover the person the question asks about, say "
+    "so. A BACKGROUND section, if there is one, comes from the user and is reliable. Answer in "
+    "the language of the question, concisely, without repeating the notes."
 )
 
 _NONE_RE = re.compile(r"^\W*NONE\W*$", re.IGNORECASE)
@@ -221,10 +248,10 @@ def _interrupt_check():
             pass
 
 
-def _generate(clip, sys_text, user_text, cfg, label):
+def _generate(clip, sys_text, user_text, cfg, label, length_tokens=None, fill=0.7):
     """One tokenize + generate call. Returns (answer, thinking_text); raises on a
     failure (the caller turns it into a message)."""
-    words = max(40, int(cfg["max_length"] / TOKENS_PER_WORD * 0.7))
+    words = max(40, int((length_tokens or cfg["max_length"]) / TOKENS_PER_WORD * fill))
     sys_text = sys_text + LENGTH_ADDENDUM_TEMPLATE.format(words=words)
 
     def make_prompts(kind):
@@ -266,11 +293,21 @@ class _StageError(Exception):
     pass
 
 
-def _compact(clip, question, notes_text, cfg, notes_max_tokens):
-    cfg = dict(cfg, thinking=False, max_length=max(cfg["max_length"], min(4096, int(notes_max_tokens))))
+def _compact(clip, question, notes_text, cfg, notes_max_tokens, counter, target=None):
+    """Condenses the notes towards `target` tokens. Returns the condensed text, or None
+    when the model ran into its limit mid-sentence (a cut-off text must never replace
+    the notes). The output room is never smaller than the input: a model that rewrites
+    instead of shortening must still be able to finish."""
+    room = min(8192, max(int(cfg["max_length"]), int(notes_max_tokens * 1.5),
+                         int(counter(notes_text) * 1.2)))
+    cfg = dict(cfg, thinking=False, max_length=room)
     user = f"QUESTION:\n{question}\n\nNOTES:\n{notes_text}"
-    text, _ = _generate(clip, COMPACT_SYSTEM, user, cfg, "condensing the notes")
-    return text.strip()
+    text, _ = _generate(clip, COMPACT_SYSTEM, user, cfg, "condensing the notes",
+                        length_tokens=int(target or notes_max_tokens * 0.8))
+    text = text.strip()
+    if _hit_limit(text, counter, room) and not _ends_cleanly(text):
+        return None
+    return text
 
 
 def _reduce_to_fit(clip, question, notes_text, counter, target, cfg, notes_max_tokens, log):
@@ -293,7 +330,8 @@ def _reduce_to_fit(clip, question, notes_text, counter, target, cfg, notes_max_t
         parts = []
         for group in groups:
             _interrupt_check()
-            parts.append(_compact(clip, question, "\n\n".join(group), cfg, notes_max_tokens))
+            joined = "\n\n".join(group)
+            parts.append(_compact(clip, question, joined, cfg, notes_max_tokens, counter) or joined)
         new_text = "\n\n".join(parts)
         if counter(new_text) >= counter(notes_text):
             break
@@ -315,8 +353,8 @@ class MykeeTextAnalyzer:
     OUTPUT_TOOLTIPS = (
         "The notes collected from the chunks (round 1).",
         "The final answer (round 2), from the notes.",
-        "How the run went: parts, parts with notes, what was reused.",
-        "The thinking of round 1, per part (when thinking is on).",
+        "How the run went: chunks, chunks with notes, what was reused.",
+        "The thinking of round 1, per chunk (when thinking is on).",
         "The thinking of round 2 (when thinking is on).",
     )
     DESCRIPTION = (
@@ -333,6 +371,13 @@ class MykeeTextAnalyzer:
                 "multiline": True, "default": "",
                 "tooltip": "What you want to know about the text. The notes are written for "
                            "THIS question: a new question reads the text again.",
+            }),
+            "context": ("STRING", {
+                "multiline": True, "default": "",
+                "tooltip": "Optional background you know to be true and want the model to rely on: "
+                           "who is who, how the people are related, when things happen. Given to "
+                           "every call as reliable BACKGROUND. Keep it short. Changing it reads "
+                           "the text again.",
             }),
             "text": ("STRING", {
                 "multiline": True, "default": "",
@@ -359,7 +404,7 @@ class MykeeTextAnalyzer:
                 "multiline": True, "default": "",
                 "tooltip": "Round 1's system prompt. Empty = built-in default for the "
                            "note_mode. Round 1's user turn is labelled QUESTION, NOTES SO FAR "
-                           "(rolling only) and TEXT PART. A chunk without anything relevant "
+                           "(rolling only) and TEXT CHUNK. A chunk without anything relevant "
                            "should be answered with the single word NONE.",
             }),
         }
@@ -392,8 +437,9 @@ class MykeeTextAnalyzer:
             "notes_max_tokens": ("INT", {
                 "default": 2048, "min": 256, "max": 20000, "step": 64,
                 "tooltip": "rolling mode: when the notes grow past this many tokens they are "
-                           "condensed by the model (keeping what bears on the question). Also "
-                           "the size notes are condensed to when they are too long for round 2.",
+                           "condensed by the model (keeping what bears on the question) down to "
+                           "about this value minus max_length, so the next chunk's notes still fit. "
+                           "Also the size notes are condensed to when they are too long for round 2.",
             }),
             "input_token_limit": ("INT", {
                 "default": 16384, "min": 0, "max": 1000000, "step": 256,
@@ -409,7 +455,7 @@ class MykeeTextAnalyzer:
         # The inputs one wires or changes all the time come first (they stay
         # visible above the tabs drawn by web/mykee_text_analyzer.js); the
         # rest follows in the order of its tab.
-        head = ["clip", "question", "text", "note_mode", "seed", "second_seed", "second_seed_control"]
+        head = ["clip", "question", "context", "text", "note_mode", "seed", "second_seed", "second_seed_control"]
         ordered = {k: required[k] for k in head}
         ordered.update({k: v for k, v in required.items() if k not in head})
         required = ordered
@@ -454,6 +500,8 @@ class MykeeTextAnalyzer:
         clip_2 = p.get("clip_2")
         two_clips = clip_2 is not None and not _same_clip(clip, clip_2)
         question = str(p.get("question") or "").strip()
+        context = str(p.get("context") or "").strip()
+        background = f"BACKGROUND (from the user, reliable):\n{context}\n\n" if context else ""
         note_mode = p.get("note_mode") or "rolling"
 
         text_in = kw.get("text_in")
@@ -475,16 +523,16 @@ class MykeeTextAnalyzer:
         if limit > 0:
             for i, n in enumerate(sizes, 1):
                 if n > limit:
-                    where = "The text" if len(chunks) == 1 else f"Part {i}"
+                    where = "The text" if len(chunks) == 1 else f"Chunk {i}"
                     return fail(f"{where} is too long: {n} tokens, the limit is {limit}. Cut it with "
                                 f"the Mykee Text Splitter first and connect its chunks to text_in "
                                 f"(or raise input_token_limit if the model can take more).")
         total = len(chunks)
-        status_lines = [f"{total} part(s), {sum(sizes)} tokens in all"]
+        status_lines = [f"{total} chunk(s), {sum(sizes)} tokens in all"]
         expected = _u(kw.get("chunk_count")) if kw.get("chunk_count") is not None else None
         if expected is not None and int(expected) != total:
-            status_lines.append(f"WARNING: chunk_count says {expected} but {total} part(s) arrived")
-            _toast(node_id, "warn", f"chunk_count is {expected}, but {total} part(s) arrived.")
+            status_lines.append(f"WARNING: chunk_count says {expected} but {total} chunk(s) arrived")
+            _toast(node_id, "warn", f"chunk_count is {expected}, but {total} chunk(s) arrived.")
 
         notes_cfg = _stage_cfg(p, "")
         final_cfg = _stage_cfg(p, "second_")
@@ -497,7 +545,7 @@ class MykeeTextAnalyzer:
         sig = _clip_signature(clip) or ("object", id(clip))
         key = (
             tuple(hashlib.sha1(c.encode("utf-8", "replace")).hexdigest() for c in chunks),
-            question, note_mode, p.get("mode"), notes_system,
+            question, context, note_mode, p.get("mode"), notes_system,
             tuple(sorted((k, str(v)) for k, v in notes_cfg.items())), notes_max_tokens, sig,
         )
 
@@ -521,8 +569,8 @@ class MykeeTextAnalyzer:
                 _unload_clip(clip_2)
             state = _PARTIAL.get(key) or {"next": 0, "rolling": "", "entries": [], "thinks": [], "parts": []}
             if state["next"]:
-                log(f"continuing at part {state['next'] + 1} of {total}")
-                status_lines.append(f"round 1: continued at part {state['next'] + 1}")
+                log(f"continuing at chunk {state['next'] + 1} of {total}")
+                status_lines.append(f"round 1: continued at chunk {state['next'] + 1}")
             _remember(_PARTIAL, key, state, _PARTIAL_MAX)
             pbar = ProgressBar(total) if ProgressBar is not None else None
             if pbar is not None and state["next"]:
@@ -535,17 +583,17 @@ class MykeeTextAnalyzer:
                         node_id,
                         state["rolling"] if note_mode == "rolling" else "\n\n".join(state["entries"]),
                         "\n\n".join(state["thinks"]),
-                        "\n".join(status_lines + state["parts"] + [f"reading part {i + 1} of {total} ..."]))
-                    user = f"QUESTION:\n{question}\n\n"
+                        "\n".join(status_lines + state["parts"] + [f"reading chunk {i + 1} of {total} ..."]))
+                    user = f"{background}QUESTION:\n{question}\n\n"
                     if note_mode == "rolling" and state["rolling"]:
-                        user += f"NOTES SO FAR:\n{state['rolling']}\n\n"
-                    user += f"TEXT PART {i + 1} OF {total}:\n{chunk}"
+                        user += f"NOTES SO FAR (build on them, do not copy them):\n{state['rolling']}\n\n"
+                    user += f"TEXT CHUNK {i + 1} OF {total}:\n{chunk}"
                     try:
-                        out, think = _generate(clip, notes_system, user, notes_cfg, f"part {i + 1}/{total}")
+                        out, think = _generate(clip, notes_system, user, notes_cfg, f"chunk {i + 1}/{total}")
                     except Exception as e:
                         if type(e).__name__ == "InterruptProcessingException":
                             raise
-                        error = (f"part {i + 1} of {total} failed: {type(e).__name__}: {e}\n"
+                        error = (f"chunk {i + 1} of {total} failed: {type(e).__name__}: {e}\n"
                                  + generation_error_hint(False, e))
                         break
                     out = strip_quote_marks(out).strip()
@@ -554,32 +602,54 @@ class MykeeTextAnalyzer:
                         if _ends_cleanly(out):
                             # long, but it ended with a full sentence: most likely complete
                             cut_note = " - close to max_length, but it ends with a full sentence"
-                            log(f"part {i + 1}/{total}: the notes are close to max_length")
+                            log(f"chunk {i + 1}/{total}: the notes are close to max_length")
                         else:
                             trimmed = _trim_to_sentence(out)
                             cut_note = (" - hit max_length, cut at the last full sentence (raise max_length)"
                                         if len(trimmed) < len(out) else " - hit max_length (raise max_length)")
                             out = trimmed
-                            log(f"part {i + 1}/{total}: the notes hit max_length")
-                            _toast(node_id, "warn", f"Part {i + 1}: the notes hit max_length and were cut. "
+                            log(f"chunk {i + 1}/{total}: the notes hit max_length")
+                            _toast(node_id, "warn", f"Chunk {i + 1}: the notes hit max_length and were cut. "
                                                     f"Raise max_length if notes get lost.")
                     if think:
-                        state["thinks"].append(f"[Part {i + 1}]\n{think}")
+                        state["thinks"].append(f"[Chunk {i + 1}]\n{think}")
                     if _NONE_RE.match(out):
-                        state["parts"].append(f"part {i + 1}: nothing relevant")
-                        log(f"part {i + 1}/{total}: nothing relevant")
+                        state["parts"].append(f"chunk {i + 1}: nothing relevant")
+                        log(f"chunk {i + 1}/{total}: nothing relevant")
                     else:
-                        entry = f"[Part {i + 1}] {out}"
+                        entry = f"[Chunk {i + 1}] {out}"
                         state["entries"].append(entry)
-                        state["parts"].append(f"part {i + 1}: notes ({counter(out)} tokens){cut_note}")
-                        log(f"part {i + 1}/{total}: {counter(out)} tokens of notes")
+                        state["parts"].append(f"chunk {i + 1}: notes ({counter(out)} tokens){cut_note}")
+                        log(f"chunk {i + 1}/{total}: {counter(out)} tokens of notes")
                         if note_mode == "rolling":
                             state["rolling"] = (state["rolling"] + "\n\n" + entry) if state["rolling"] else entry
                             if counter(state["rolling"]) > notes_max_tokens:
                                 try:
-                                    state["rolling"] = _compact(
-                                        clip, question, state["rolling"], notes_cfg, notes_max_tokens)
-                                    log(f"notes condensed to {counter(state['rolling'])} tokens")
+                                    # Aim low enough that the next chunk's notes still fit: the
+                                    # condensed notes plus one more note must stay under the limit.
+                                    target = max(int(notes_max_tokens * 0.5),
+                                                 notes_max_tokens - int(notes_cfg["max_length"]))
+                                    condensed = _compact(
+                                        clip, question, state["rolling"], notes_cfg, notes_max_tokens,
+                                        counter, target)
+                                    before = counter(state["rolling"])
+                                    # a second pass only helps when the first one did shorten the notes
+                                    if (condensed is not None and counter(condensed) > notes_max_tokens
+                                            and counter(condensed) < before * 0.9):
+                                        log(f"notes condensed only to {counter(condensed)} tokens - "
+                                            f"condensing once more")
+                                        again = _compact(clip, question, condensed, notes_cfg,
+                                                         notes_max_tokens, counter, int(target * 0.7))
+                                        if again is not None and counter(again) < counter(condensed):
+                                            condensed = again
+                                    if condensed is None:
+                                        log("condensing the notes hit its limit - the notes were kept as they were")
+                                        state["parts"].append(
+                                            f"chunk {i + 1}: condensing the notes hit its limit and was discarded "
+                                            f"(raise notes_max_tokens)")
+                                    else:
+                                        state["rolling"] = condensed
+                                        log(f"notes condensed to {counter(state['rolling'])} tokens")
                                 except Exception as e:
                                     if type(e).__name__ == "InterruptProcessingException":
                                         raise
@@ -602,7 +672,7 @@ class MykeeTextAnalyzer:
         with_notes = sum(1 for line in status_lines if "notes (" in line)
         if error is not None:
             status_lines.append(f"STOPPED: {error}")
-            status_lines.append("Queue again to continue at the part where it stopped.")
+            status_lines.append("Queue again to continue at the chunk where it stopped.")
             status = "\n".join(status_lines)
             print(f"{LOG} {error}")
             return self._result(f"[{error}]", notes_text, status, think1, "")
@@ -616,14 +686,14 @@ class MykeeTextAnalyzer:
         think2 = ""
         try:
             if not notes_text.strip():
-                notes_for_answer = "(none of the parts contained anything relevant to the question)"
+                notes_for_answer = "(none of the chunks contained anything relevant to the question)"
             else:
                 target = max(1000, (limit if limit > 0 else 16384) - 1024)
                 notes_for_answer = _reduce_to_fit(
                     answer_clip, question, notes_text, counter, target, notes_cfg, notes_max_tokens,
                     lambda line: (log(line), status_lines.append(line)))
-            user = (f"QUESTION:\n{question}\n\nNOTES (collected part by part from a long text of "
-                    f"{total} part(s)):\n{notes_for_answer}")
+            user = (f"{background}QUESTION:\n{question}\n\nNOTES (collected chunk by chunk from a long text of "
+                    f"{total} chunk(s)):\n{notes_for_answer}")
             answer, think2 = _generate(answer_clip, final_system, user, final_cfg, "final answer")
             answer = strip_quote_marks(answer)
             if _hit_limit(answer, counter, final_cfg["max_length"]) and not _ends_cleanly(answer):
@@ -650,7 +720,7 @@ class MykeeTextAnalyzer:
         else:
             next_seed = seed
 
-        status_lines.insert(1, f"notes found in {with_notes} of {total} part(s), note_mode {note_mode}")
+        status_lines.insert(1, f"notes found in {with_notes} of {total} chunk(s), note_mode {note_mode}")
         status = "\n".join(status_lines)
         print("=" * 70)
         print(f"{LOG} {status_lines[0]}; {status_lines[1]}")
