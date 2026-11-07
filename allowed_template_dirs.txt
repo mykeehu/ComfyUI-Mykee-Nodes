@@ -1,0 +1,5 @@
+# Extra folders that the template nodes' "custom_path" may point to.
+# One absolute folder per line. Sub-folders are allowed too.
+# Lines starting with # are ignored. Restart ComfyUI is NOT needed.
+# Example:
+# D:\MyTemplates

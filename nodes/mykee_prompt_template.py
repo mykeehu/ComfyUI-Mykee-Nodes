@@ -80,6 +80,8 @@ try:
 except ImportError:
     PromptServer = None
 
+from .mykee_path_guard import check_custom_dir
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -157,8 +159,9 @@ def _default_templates_dir():
 def _templates_dir(custom_path=None):
     custom_path = (custom_path or "").strip()
     if custom_path:
-        os.makedirs(custom_path, exist_ok=True)
-        return custom_path
+        # Raises PermissionError outside the allowed roots (see mykee_path_guard).
+        # Nothing is created here: the folder is only created by a real save.
+        return check_custom_dir(custom_path)
     return _default_templates_dir()
 
 
@@ -209,8 +212,21 @@ def _load_template(directory, name):
     return None
 
 
+def _is_template_file(path):
+    """True only for a JSON file that looks like one of our templates, so a
+    save can never clobber some other project's JSON file."""
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return False
+    return isinstance(data, dict) and bool(data) and set(data) <= {"prompt", "negative_prompt", "text"}
+
+
 def _save_template(directory, name, prompt, negative_prompt):
     p = _template_path(directory, name)
+    if os.path.exists(p) and not _is_template_file(p):
+        raise ValueError(f"'{name}.json' already exists and is not a prompt template - refusing to overwrite it")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -315,8 +331,10 @@ try:
 
     @_routes.get("/mykee/prompt_templates/list")
     async def _mykee_pt_list(request):
-        custom_path = request.query.get("path", "")
-        directory = _templates_dir(custom_path)
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         return _aiohttp_web.json_response({"templates": _list_template_names(directory)})
 
     @_routes.get("/mykee/prompt_templates/load")
@@ -324,8 +342,10 @@ try:
         name = _sanitize_template_name(request.query.get("name", ""))
         if not name:
             return _aiohttp_web.json_response({"error": "name is required"}, status=400)
-        custom_path = request.query.get("path", "")
-        directory = _templates_dir(custom_path)
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         template = _load_template(directory, name)
         if template is None:
             return _aiohttp_web.json_response(
@@ -340,7 +360,10 @@ try:
     @_routes.get("/mykee/prompt_templates/image_info")
     async def _mykee_pt_image_info(request):
         name = _sanitize_template_name(request.query.get("name", ""))
-        directory = _templates_dir(request.query.get("path", ""))
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError:
+            return _aiohttp_web.json_response({"exists": False})
         found = _find_template_image(directory, name)
         if not found:
             return _aiohttp_web.json_response({"exists": False})
@@ -353,7 +376,10 @@ try:
     @_routes.get("/mykee/prompt_templates/image")
     async def _mykee_pt_image(request):
         name = _sanitize_template_name(request.query.get("name", ""))
-        directory = _templates_dir(request.query.get("path", ""))
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         found = _find_template_image(directory, name)
         if not found:
             return _aiohttp_web.json_response({"error": "no image for this template"}, status=404)
@@ -372,8 +398,10 @@ try:
         negative_prompt = data.get("negative_prompt", "")
         if not isinstance(prompt, str) or not isinstance(negative_prompt, str):
             return _aiohttp_web.json_response({"error": "prompt/negative_prompt must be strings"}, status=400)
-        custom_path = data.get("path", "")
-        directory = _templates_dir(custom_path)
+        try:
+            directory = _templates_dir(data.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         try:
             _save_template(directory, name, prompt, negative_prompt)
         except Exception as e:

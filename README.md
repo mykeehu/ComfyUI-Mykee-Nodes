@@ -130,6 +130,17 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Seed](documents/seed.md) | Rework of rgthree's Seed node with a lockable seed and history. |
 | [Mykee XYZ Plot / XYZ Plot Assembler](documents/xyz-plot.md) | Universal XYZ plot: any widget of any node can be an axis. |
 
+## Security notes
+
+ComfyUI itself has no authentication, so do not expose it to untrusted networks (`--listen`, port forwarding, hosted setups) without a reverse proxy / auth in front of it.
+
+The Prompt Template and Model Template nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`). Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind.
+
+**Third-party code and model files (your responsibility):**
+
+- **StyleGAN nodes:** `.pkl` model files are loaded with Python's `pickle`, which can execute arbitrary code. Only use `.pkl` files from sources you trust. Automatically downloaded models (NVIDIA, Google Drive) are not hash-verified.
+- **Voice/Accent Match node:** on first use it clones the Seed-VC repository (`git clone --depth 1`) from GitHub and runs its code. The clone is intentionally not pinned to a commit, so users get upstream fixes, which also means you run whatever the upstream repository contains at that moment. Review it if that matters to you.
+
 ## Credits
 
 Third-party code and licenses are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

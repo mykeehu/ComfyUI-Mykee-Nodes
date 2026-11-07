@@ -68,6 +68,7 @@ except ImportError:
     PromptServer = None
 
 from .mykee_prompt_template import _sanitize_template_name
+from .mykee_path_guard import check_custom_dir
 
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -124,8 +125,9 @@ def _default_templates_dir():
 def _templates_dir(custom_path=None):
     custom_path = (custom_path or "").strip()
     if custom_path:
-        os.makedirs(custom_path, exist_ok=True)
-        return custom_path
+        # Raises PermissionError outside the allowed roots (see mykee_path_guard).
+        # Nothing is created here: the folder is only created by a real save.
+        return check_custom_dir(custom_path)
     return _default_templates_dir()
 
 
@@ -138,7 +140,7 @@ def _list_template_names(directory):
         return sorted(
             os.path.splitext(f)[0] for f in os.listdir(directory) if f.lower().endswith(".json")
         )
-    except FileNotFoundError:
+    except OSError:
         return []
 
 
@@ -195,8 +197,21 @@ def _load_template(directory, name):
         return None
 
 
+def _is_template_file(path):
+    """True only for a JSON file that looks like one of our templates, so a
+    save can never clobber some other project's JSON file."""
+    try:
+        data = _read_json_file(path)
+    except Exception:
+        return False
+    return isinstance(data, dict) and data and all(k == "version" or k == "notes" or k in SLOTS for k in data)
+
+
 def _save_template(directory, name, values, notes=""):
     p = _template_path(directory, name)
+    if os.path.exists(p) and not _is_template_file(p):
+        raise ValueError(f"'{name}.json' already exists and is not a model template - refusing to overwrite it")
+    os.makedirs(directory, exist_ok=True)
     tmp = p + ".tmp"
     payload = {"version": TEMPLATE_VERSION}
     payload.update(_clean_values(values))
@@ -281,7 +296,10 @@ try:
 
     @_routes.get("/mykee/model_templates/list")
     async def _mykee_mt_list(request):
-        directory = _templates_dir(request.query.get("path", ""))
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         return _aiohttp_web.json_response({"templates": _list_template_names(directory)})
 
     @_routes.get("/mykee/model_templates/load")
@@ -289,7 +307,10 @@ try:
         name = _sanitize_template_name(request.query.get("name", ""))
         if not name:
             return _aiohttp_web.json_response({"error": "name is required"}, status=400)
-        directory = _templates_dir(request.query.get("path", ""))
+        try:
+            directory = _templates_dir(request.query.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         loaded = _load_template(directory, name)
         if loaded is None:
             return _aiohttp_web.json_response(
@@ -312,7 +333,10 @@ try:
             return _aiohttp_web.json_response(
                 {"error": "nothing to save - no connected output has a value and the notes are empty"}, status=400
             )
-        directory = _templates_dir(data.get("path", ""))
+        try:
+            directory = _templates_dir(data.get("path", ""))
+        except PermissionError as e:
+            return _aiohttp_web.json_response({"error": str(e)}, status=403)
         try:
             _save_template(directory, name, values, notes)
         except Exception as e:
