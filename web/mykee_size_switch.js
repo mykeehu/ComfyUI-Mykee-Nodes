@@ -158,15 +158,60 @@ function parseRatio(text) {
 
 const DEFAULT_STEP = 8; // the step of the arrows when divisible_by is Off
 
+function gcd(a, b) {
+    return b ? gcd(b, a % b) : a;
+}
+
+// Sides that keep a ratio EXACTLY and are both divisible by the divisor lie on a
+// grid: for 4:3 and a divisor of 8 that is 32 x 24, 64 x 48, ... (1664 x 1248).
+// Returns [step of the base side, step of the other side].
+function ratioGrid(rw, rh, div, baseIsWidth) {
+    const a = div / gcd(rw, div);
+    const b = div / gcd(rh, div);
+    const m = (a * b) / gcd(a, b);
+    return baseIsWidth ? [rw * m, rh * m] : [rh * m, rw * m];
+}
+
+// [base, other] for a ratio rw:rh with the base side rounded to the divisor (the
+// same maths as the backend). The nearest grid point is used when it is close to
+// the typed number (within 4%, or one divisor); otherwise the base is rounded and
+// the other side is calculated from it. Fitting the result again changes nothing.
+function fitRatio(base, rw, rh, div, baseIsWidth) {
+    const b = snap(base, div);
+    const factor = baseIsWidth ? rh / rw : rw / rh;
+    const fallback = [b, snap(b * factor, div)];
+    if (!div) return fallback;
+    const [step, otherStep] = ratioGrid(rw, rh, div, baseIsWidth);
+    const lowest = Math.max(MIN_SIZE, div);
+    let best = null;
+    const k0 = Math.floor(b / step);
+    for (const k of [k0, k0 + 1]) {
+        if (k < 1) continue;
+        const value = step * k;
+        const other = otherStep * k;
+        if (value < lowest || value > MAX_SIZE || other < lowest || other > MAX_SIZE) continue;
+        const distance = Math.abs(value - b);
+        if (best === null || distance < best[0]) best = [distance, value, other];
+    }
+    if (best !== null && best[0] <= Math.max(div, b * 0.04)) return [best[1], best[2]];
+    return fallback;
+}
+
 // The arrows and dragging step by the divisor, so one click always lands on
 // the next valid number (with a step of 8 and a divisor of 16, 1024 - 8 would
 // be rounded straight back to 1024).
 function applyStep(node) {
-    const step = divisor(node) || DEFAULT_STEP;
+    const div = divisor(node);
     for (let i = 1; i <= MAX_PAIRS; i++) {
+        // With a ratio and a divisor the valid pairs lie on a grid (4:3 and 8:
+        // 32 x 24, 64 x 48 ...), so an arrow click moves one grid point of the
+        // side it belongs to, and a typed number is never mistaken for a click.
+        const ratio = parseRatio(widget(node, `ratio_${i}`)?.value);
+        const grid = ratio && div ? ratioGrid(ratio[0], ratio[1], div, true) : null;
         for (const axis of ["width", "height"]) {
             const w = widget(node, `${axis}_${i}`);
             if (!w) continue;
+            const step = grid ? grid[axis === "width" ? 0 : 1] : div || DEFAULT_STEP;
             w.options = w.options || {};
             w.options.step2 = step;
             w.options.step = step * 10;
@@ -176,7 +221,7 @@ function applyStep(node) {
             // was rounded to an off-grid number and then snapped back by us
             // (stuck at 3136). A min that is a multiple of the step removes the
             // offset (this is also the lowest value snap() allows).
-            w.options.min = Math.max(MIN_SIZE, divisor(node));
+            w.options.min = Math.max(MIN_SIZE, grid ? step : div);
         }
     }
 }
@@ -191,11 +236,24 @@ function rememberPair(node, i) {
 
 // Fallback for frontends that ignore the step above: a change of exactly one
 // default step that the rounding would undo moves one divisor instead.
-function nudge(node, w) {
+function nudge(node, w, i, axis) {
     const div = divisor(node);
     const prior = w._mykeeLast;
     const value = Number(w.value);
-    if (!div || div <= DEFAULT_STEP || !Number.isFinite(prior)) return;
+    if (!div || !Number.isFinite(prior)) return;
+    // With a ratio the arrows move along the exact-ratio grid, one grid point at a
+    // time; otherwise the nearest grid point would be the one the arrow came from.
+    const ratio = parseRatio(widget(node, `ratio_${i}`)?.value);
+    if (ratio && !connectedAxes(node).has(`${axis === "w" ? "width" : "height"}_${i}`)) {
+        const delta = value - prior;
+        if (delta !== 0 && Math.abs(delta) <= Math.max(div, DEFAULT_STEP)) {
+            const [step] = ratioGrid(ratio[0], ratio[1], div, axis === "w");
+            const grid = Math.sign(delta) > 0 ? Math.floor(prior / step) + 1 : Math.ceil(prior / step) - 1;
+            w.value = Math.max(Math.max(MIN_SIZE, div), Math.min(MAX_SIZE, grid * step));
+        }
+        return;
+    }
+    if (div <= DEFAULT_STEP) return;
     if (Math.abs(value - prior) === DEFAULT_STEP && value % div !== 0) {
         w.value = prior + Math.sign(value - prior) * div;
     }
@@ -224,11 +282,9 @@ function applyPairRaw(node, i) {
     const [rw, rh] = ratio;
     if (!wLinked && !hLinked) {
         if (driver === "w") {
-            wWidget.value = snap(Number(wWidget.value), div);
-            hWidget.value = snap((wWidget.value * rh) / rw, div);
+            [wWidget.value, hWidget.value] = fitRatio(Number(wWidget.value), rw, rh, div, true);
         } else {
-            hWidget.value = snap(Number(hWidget.value), div);
-            wWidget.value = snap((hWidget.value * rw) / rh, div);
+            [hWidget.value, wWidget.value] = fitRatio(Number(hWidget.value), rw, rh, div, false);
         }
     } else if (!wLinked) {
         wWidget.value = snap(Number(wWidget.value), div); // only the base can be rounded
@@ -563,6 +619,7 @@ function setupNode(node) {
             const callback = ratio.callback;
             ratio.callback = function () {
                 const ret = callback?.apply(this, arguments);
+                applyStep(node);
                 applyPair(node, i);
                 node.graph?.setDirtyCanvas?.(true, true);
                 return ret;
@@ -578,7 +635,7 @@ function setupNode(node) {
             w.callback = function () {
                 const ret = callback?.apply(this, arguments);
                 // The side edited last leads when a ratio is set.
-                nudge(node, w);
+                nudge(node, w, i, axis === "width" ? "w" : "h");
                 const state = readState(node);
                 state.driver[i - 1] = axis === "width" ? "w" : "h";
                 writeState(node, state);

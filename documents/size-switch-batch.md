@@ -43,9 +43,16 @@ image is only read for its size, and only when its pair is selected.
 4:5, always width:height): with a ratio set, one side leads and the other is
 calculated from it, then rounded to `divisible_by`, so only whole numbers come
 out. The leading side is the one you edited last - or the connected one, if
-only one side is connected. The calculated field updates as you type. Because
-of the rounding the ratio is exact only when the numbers allow it (e.g. 16:9
-with 64 gives 1920x1088, not 1920x1080).
+only one side is connected. The calculated field updates as you type.
+
+With a ratio and a `divisible_by` the node looks for pairs where BOTH sides are
+divisible and the ratio is exact. They lie on a grid: for 4:3 and 8 that is
+32x24, 64x48, ... 1664x1248, 1696x1272. A typed number goes to the nearest grid
+pair when that is close (within 4% or one divisor), so 1672 becomes 1664x1248
+(not 1672x1256, which is no exact 4:3), and the arrows of the number fields move
+one grid pair at a time. Far from any grid pair the ratio can only be
+approximate, because of the rounding (e.g. 16:9 with 64 gives 1920x1088, not
+1920x1080).
 
 Outputs:
 

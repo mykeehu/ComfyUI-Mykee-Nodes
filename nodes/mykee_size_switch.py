@@ -129,6 +129,43 @@ def _parse_ratio(ratio):
     return (a, b) if a > 0 and b > 0 else None
 
 
+def _fit_ratio(base, rw, rh, divisor, base_is_width):
+    """(base, other) for a ratio rw:rh with the base side rounded to divisor.
+
+    With a divisor, sides that keep the ratio EXACTLY and are both divisible exist
+    on a grid: for 4:3 and a divisor of 8 that is 32 x 24, 64 x 48, ... (1664 x 1248).
+    The nearest grid point is used when it is close to the typed number (within 4%,
+    or one divisor); otherwise the base is rounded and the other side is calculated
+    from it. The result is stable: fitting it again gives the same pair.
+    """
+    b = _snap(base, divisor)
+    factor = (rh / rw) if base_is_width else (rw / rh)
+    fallback = (b, _snap(b * factor, divisor))
+    if not divisor:
+        return fallback
+    step, other_step = _ratio_grid(rw, rh, divisor, base_is_width)
+    lowest = max(MIN_SIZE, divisor)
+    best = None
+    for k in (b // step, b // step + 1):
+        if k < 1:
+            continue
+        value, other = step * k, other_step * k
+        if not (lowest <= value <= MAX_SIZE and lowest <= other <= MAX_SIZE):
+            continue
+        distance = abs(value - b)
+        if best is None or distance < best[0]:
+            best = (distance, value, other)
+    if best is not None and best[0] <= max(divisor, b * 0.04):
+        return (best[1], best[2])
+    return fallback
+
+
+def _ratio_grid(rw, rh, divisor, base_is_width):
+    """(step of the base side, step of the other side) of the exact-ratio grid."""
+    m = math.lcm(divisor // math.gcd(rw, divisor), divisor // math.gcd(rh, divisor))
+    return (rw * m, rh * m) if base_is_width else (rh * m, rw * m)
+
+
 def _resolve_pair(width, height, ratio, divisor, item, adjust_external):
     """The final (width, height) of one pair.
 
@@ -147,11 +184,13 @@ def _resolve_pair(width, height, ratio, divisor, item, adjust_external):
     if item["w_linked"] != item["h_linked"]:
         driver = "w" if item["w_linked"] else "h"  # the connected side leads
     if driver == "w":
-        base = width if w_raw else _snap(width, divisor)
-        other = _snap(base * rh / rw, divisor)
+        if w_raw:  # a connected value stays as it is: only the other side is calculated
+            return (width, height if h_raw else _snap(width * rh / rw, divisor))
+        base, other = _fit_ratio(width, rw, rh, divisor, True)
         return (base, height if h_raw else other)
-    base = height if h_raw else _snap(height, divisor)
-    other = _snap(base * rw / rh, divisor)
+    if h_raw:
+        return (width if w_raw else _snap(height * rw / rh, divisor), height)
+    base, other = _fit_ratio(height, rw, rh, divisor, False)
     return (width if w_raw else other, base)
 
 
