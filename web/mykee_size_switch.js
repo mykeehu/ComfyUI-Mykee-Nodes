@@ -33,7 +33,7 @@ const NODE_NAME = "MykeeSizeSwitchBatch";
 const CONFIG_WIDGET = "pairs_config";
 const MAX_PAIRS = 32;
 const MIN_SIZE = 16;
-const MIN_NODE_WIDTH = 320;
+const MIN_NODE_WIDTH = 320;      // width of a NEW node only; the user may make it narrower
 const MAX_SIZE = 16384;
 // How far the width / height fields are shifted to the right. The socket of a
 // field has a click area that reaches over the first part of the field, and
@@ -382,10 +382,62 @@ function refreshToggles(node) {
 // The node's height always follows its content (grows AND shrinks). ComfyUI
 // sizes a new node while all pairs are still there, so without the shrinking
 // a new node would start far too tall.
+//
+// The size the user gives the node by dragging its corner is remembered as the
+// width plus the EXTRA height above what the content needs, in node.properties
+// (saved with the workflow). The extra - not the absolute height - is kept so
+// the node still follows its content when pairs are added or removed.
+const SIZE_PROP = "mykee_size";
+const MAX_USER_SIZE = 4000;
+const MIN_USER_WIDTH = 100;      // sanity bound; the real minimum is what the widgets need
+
+function readUserSize(node) {
+    const raw = node.properties?.[SIZE_PROP];
+    if (!raw || typeof raw !== "object") return null;
+    const w = Number(raw.w);
+    const extra = Number(raw.extra);
+    if (!Number.isFinite(w) || !Number.isFinite(extra)) return null;
+    return {
+        w: Math.max(MIN_USER_WIDTH, Math.min(MAX_USER_SIZE, Math.round(w))),
+        extra: Math.max(0, Math.min(MAX_USER_SIZE, Math.round(extra))),
+    };
+}
+
+function writeUserSize(node, w, extra) {
+    const next = {
+        w: Math.max(MIN_USER_WIDTH, Math.min(MAX_USER_SIZE, Math.round(w))),
+        extra: Math.max(0, Math.min(MAX_USER_SIZE, Math.round(extra))),
+    };
+    const old = readUserSize(node);
+    if (old && old.w === next.w && old.extra === next.extra) return;
+    node.properties = node.properties || {};
+    node.properties[SIZE_PROP] = next;
+}
+
+// Called while / right after the user drags the node's resize corner.
+function rememberUserSize(node) {
+    const size = node.computeSize?.();
+    if (!size || !Number.isFinite(size[1])) return;
+    writeUserSize(node, node.size[0], node.size[1] - size[1]);
+}
+
+// Workflows saved before the size was remembered carry only the node's size:
+// take the width and the extra height from it (once, with the layout built).
+function adoptSavedSize(node, saved) {
+    if (readUserSize(node) || !Array.isArray(saved)) return;
+    const size = node.computeSize?.();
+    if (!size || !Number.isFinite(size[1]) || !Number.isFinite(saved[0]) || !Number.isFinite(saved[1])) return;
+    writeUserSize(node, saved[0], saved[1] - size[1]);
+}
+
 function fitHeight(node) {
     const size = node.computeSize?.();
     if (!size || !Number.isFinite(size[1])) return;
-    node.setSize([Math.max(node.size[0], size[0], MIN_NODE_WIDTH), size[1]]);
+    const user = readUserSize(node);
+    node.setSize([
+        Math.max(user ? user.w : node.size[0], size[0]),
+        size[1] + (user ? user.extra : 0),
+    ]);
     node.graph?.setDirtyCanvas?.(true, true);
 }
 
@@ -401,12 +453,13 @@ function refreshDisabled(node) {
     }
 }
 
-function refreshAll(node) {
+function refreshAll(node, savedSize) {
     syncPairs(node);
     refreshDisabled(node);
     applyStep(node);
     for (let i = 1; i <= MAX_PAIRS; i++) rememberPair(node, i);
     refreshToggles(node);
+    if (savedSize) adoptSavedSize(node, savedSize);
     fitHeight(node);
     node._mykeeSig = layoutSignature(node);
     node._mykeeCfg = widget(node, CONFIG_WIDGET)?.value ?? "";
@@ -573,7 +626,7 @@ function setupNode(node) {
         };
     }
 
-    node.mykeeSizeRefresh = () => refreshAll(node);
+    node.mykeeSizeRefresh = (savedSize) => refreshAll(node, savedSize);
     node.setSize([Math.max(node.size[0], MIN_NODE_WIDTH), node.size[1]]);
     refreshAll(node);
     node._mykeeReady = true;
@@ -594,11 +647,12 @@ app.registerExtension({
         };
 
         const onConfigure = nodeType.prototype.onConfigure;
-        nodeType.prototype.onConfigure = function () {
+        nodeType.prototype.onConfigure = function (info) {
             const ret = onConfigure?.apply(this, arguments);
             // Widget values and links are restored by now (links of other
             // nodes may still be loading, hence the small delay).
-            setTimeout(() => this.mykeeSizeRefresh?.(), 50);
+            const savedSize = Array.isArray(info?.size) ? [...info.size] : null;
+            setTimeout(() => this.mykeeSizeRefresh?.(savedSize), 50);
             return ret;
         };
 
@@ -628,6 +682,11 @@ app.registerExtension({
             const ret = onDrawForeground?.apply(this, arguments);
             ensureSynced(this);
             updateButtonCursor(this);
+            // The size is stored while the user drags the corner, and once more
+            // on the frame after the mouse is released.
+            const resizing = app.canvas?.resizing_node === this;
+            if (resizing || this._mykeeWasResizing) rememberUserSize(this);
+            this._mykeeWasResizing = resizing;
             return ret;
         };
     },
