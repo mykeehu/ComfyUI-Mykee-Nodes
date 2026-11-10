@@ -130,7 +130,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Seed](documents/seed.md) | Rework of rgthree's Seed node with a lockable seed and history. |
 | [Mykee XYZ Plot / XYZ Plot Assembler](documents/xyz-plot.md) | Universal XYZ plot: any widget of any node can be an axis. |
 | [Mykee Simple X Plot](documents/simple-x-plot.md) | One-axis version of the XYZ Plot (X only, no loop order); uses the same Assembler. |
-| [Mykee Recipe](documents/recipe.md) | Build named recipes (cfg, sampler, model, LoRA, prompt text, ...) from any widget parameter, keep several per JSON file, load them back. |
+| [Mykee Recipe](documents/recipe.md) | Build named recipes (cfg, sampler, model, LoRA, prompt text, ...) from any widget parameter, keep several per JSON file, load them back, or run the ticked ones as a batch (optionally into an XYZ Plot Assembler). |
 
 ## Security notes
 

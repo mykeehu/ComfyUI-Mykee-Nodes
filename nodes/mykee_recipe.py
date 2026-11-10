@@ -63,8 +63,21 @@ Inputs:
   custom_path  - optional folder instead of ComfyUI/user/default/Recipes.
 
 Outputs:
-  recipe_name, p1 .. p10 - the values selected on the node for the connected
-  outputs (None for the others).
+  recipe_name - name of the current recipe.
+  xyz_info    - for the Mykee XYZ Plot Assembler: a one-axis plot whose columns
+                are the recipes of a batch run (see below).
+  p1 .. p10   - the values selected on the node for the connected outputs
+                (None for the others).
+
+Batch
+-----
+With "Batch" switched on (Batch tab) the frontend queues one prompt per
+selected recipe. In each of them the links from the parameter outputs are
+replaced by the recipe's values (like the XYZ Plot does for its cells) and the
+node gets the batch description in its recipe_config: run id, cell number and
+the names (and, with "Send parameters", the parameter lines) of all recipes.
+xyz_info turns that into the X axis of a plot, so the Assembler can collect the
+images of the batch into one table.
 """
 
 import json
@@ -72,6 +85,7 @@ import math
 import os
 import re
 import tempfile
+import time
 
 try:
     import folder_paths
@@ -83,6 +97,7 @@ try:
 except ImportError:
     PromptServer = None
 
+from .mykee_xyz_plot import XYZ_INFO_TYPE, _timing
 from .mykee_prompt_template import _sanitize_segment, _sanitize_template_name, _split_name, _sort_key
 from .mykee_path_guard import check_custom_dir
 
@@ -101,6 +116,7 @@ MAX_NAME = 120
 MAX_HINT = 100
 MAX_STRING = 200_000       # one text value (a prompt)
 MAX_COMBO = 1_000          # one combo value (a file name)
+MAX_LABEL = 600            # one recipe's label in the plot (name + parameter lines)
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_LIST_FILES = 2_000
 SAFE_INT = 2 ** 53
@@ -430,6 +446,44 @@ def _parse_config(raw):
     return cfg if isinstance(cfg, dict) else {}
 
 
+def _batch_info(cfg, name_out):
+    """xyz_info for the Assembler. With a batch description in the config the
+    plot has one column per recipe; otherwise it is a single image.
+
+    The description comes from the frontend (so it is checked like any other
+    input): the run id, the cell number and, per recipe, a plot label and the
+    full text. Anything inconsistent raises instead of producing a broken plot."""
+    batch = cfg.get("batch")
+    if not isinstance(batch, dict) or not batch.get("run_id"):
+        label = name_out or "recipe"
+        return {
+            "run_id": f"single-{time.time_ns()}", "cell": 0, "total": 1, "dims": [1, 1, 1],
+            "axes": [{"label": "recipe", "value_labels": [label], "value_full": [label]}, None, None],
+            "seed": None, "reuse": False,
+        }
+    labels, full = batch.get("labels"), batch.get("full")
+    run_id = str(batch.get("run_id"))[:64]
+    ok = (
+        isinstance(labels, list) and isinstance(full, list)
+        and 1 <= len(labels) <= MAX_RECIPES and len(labels) == len(full)
+        and all(isinstance(x, str) for x in labels + full)
+    )
+    try:
+        cell = int(batch.get("cell"))
+    except (TypeError, ValueError):
+        ok = False
+    if not ok or not 0 <= cell < len(labels):
+        raise ValueError("[Mykee Recipe] The batch description is invalid - run the batch again.")
+    labels = [x[:MAX_LABEL] for x in labels]
+    full = [x[:MAX_LABEL * 2] for x in full]
+    _timing(run_id)  # stamps the start time on the run's first cell
+    return {
+        "run_id": run_id, "cell": cell, "total": len(labels), "dims": [len(labels), 1, 1],
+        "axes": [{"label": "recipe", "value_labels": labels, "value_full": full}, None, None],
+        "seed": None, "reuse": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Node
 # ---------------------------------------------------------------------------
@@ -437,10 +491,12 @@ def _parse_config(raw):
 class MykeeRecipe:
     CATEGORY = "Mykee/Utils"
     FUNCTION = "run"
-    RETURN_TYPES = ("STRING",) + (ANY,) * MAX_SLOTS
-    RETURN_NAMES = ("recipe_name",) + SLOT_NAMES
+    RETURN_TYPES = ("STRING", XYZ_INFO_TYPE) + (ANY,) * MAX_SLOTS
+    RETURN_NAMES = ("recipe_name", "xyz_info") + SLOT_NAMES
     OUTPUT_TOOLTIPS = (
         "Name of the current recipe (cleaned like a file name) - handy as a file name prefix.",
+        "Connect to the Mykee XYZ Plot Assembler: in a batch run the recipes become the columns of the plot "
+        "(with 'Send parameters' the parameter names and values are written under the recipe name).",
     ) + tuple(
         "Drag onto any widget (cfg, sampler, model, a text box, ...): the node then holds that "
         "parameter's value and stores it in the recipe."
@@ -490,7 +546,7 @@ class MykeeRecipe:
 
         # One file-name segment (a recipe name is not a path): '/' etc. are cleaned away.
         name_out = _sanitize_segment(recipe_name if isinstance(recipe_name, str) else "")
-        out = [name_out]
+        out = [name_out, _batch_info(_parse_config(recipe_config), name_out)]
         for index, slot_name in enumerate(SLOT_NAMES, start=1):
             entry = params.get(slot_name) if index <= slots else None
             if not isinstance(entry, dict) or "value" not in entry:

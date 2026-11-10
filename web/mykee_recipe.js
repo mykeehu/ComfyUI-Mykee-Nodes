@@ -1,20 +1,26 @@
 /*
  * Mykee Recipe - frontend.
  *
- * The node has a "recipe_name" output (slot 0) and up to ten parameter outputs
- * p1 .. p10 (slots 1..10, "slots" sets how many are shown). Like the XYZ Plot
+ * The node has a "recipe_name" output (slot 0), an "xyz_info" output (slot 1,
+ * for the XYZ Plot Assembler) and up to ten parameter outputs p1 .. p10
+ * (slots 2..11, "slots" sets how many are shown). Like the XYZ Plot
  * axes and the Model Template outputs, a parameter output is dragged onto any
  * widget (cfg, sampler_name, ckpt_name, a text box, a boolean, ...): the
  * output takes over the widget's type (like a Primitive node does), gets a key
  * (by default the widget's name - editable) and the node shows an editor for
  * the value. What is set here is what the connected widget receives.
  *
- * Three tabs (same tab bar as the Text Analyzer):
+ * Four tabs (same tab bar as the Text Analyzer):
  *
  *   Parameters  the connected parameters with their keys and value editors,
  *               the recipe name and "Send to Recipe".
  *   Recipe      the current recipe as editable JSON text, a pager over all the
  *               recipes in the node, "Load Recipe" (recipe -> parameters).
+ *   Batch       a switch (off by default) and, when on, the list of the recipes
+ *               on the node with check boxes (Select All / Select None):
+ *               Run queues one prompt per ticked recipe, one after another.
+ *               "Send parameters" also writes the parameter names and values
+ *               under the recipe name in the plot labels (xyz_info).
  *   JSON file   the whole recipe file as editable JSON text, plus json_name /
  *               custom_path / the list of existing files / Save / Load.
  *
@@ -45,7 +51,13 @@ import { api } from "../../scripts/api.js";
 const NODE_NAME = "MykeeRecipe";
 const CONFIG_WIDGET = "recipe_config";
 const MAX_SLOTS = 10;
-const FIRST_PARAM_OUTPUT = 1; // output 0 is recipe_name
+const FIRST_PARAM_OUTPUT = 2; // output 0 is recipe_name, output 1 is xyz_info
+const XYZ_OUTPUT = "xyz_info";
+const XYZ_INFO_TYPE = "MYKEE_XYZ_INFO";
+// Plot controllers: a batch can't be combined with them (both fan out the queue).
+const PLOT_CLASSES = new Set(["MykeeXYZPlot", "MykeeSimpleXPlot"]);
+const BATCH_CONFIRM_LIMIT = 100;
+const MAX_LABEL = 600;
 const SUPPORTED_TYPES = ["INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"];
 
 // Limits - the same as in nodes/mykee_recipe.py.
@@ -64,10 +76,12 @@ const PANEL_GAP = 6;
 const PANEL_BOTTOM_PADDING = 32;
 const RECIPE_PANE_MIN_HEIGHT = 300;
 const JSON_PANE_MIN_HEIGHT = 200;
+const BATCH_PANE_MIN_HEIGHT = 260;
 
 const TABS = [
     { id: "params", label: "Parameters", title: "The parameters connected to the outputs, and Send to Recipe" },
     { id: "recipe", label: "Recipe", title: "The current recipe (editable) and the pager over all recipes" },
+    { id: "batch", label: "Batch", title: "Run several recipes one after another" },
     { id: "json", label: "JSON file", title: "The whole recipe file, and Save / Load" },
 ];
 const TAB_PROP = "mykee_recipe_tab";
@@ -450,7 +464,7 @@ function slotTarget(node, s, ignoreLinkId) {
 // ---------------------------------------------------------------------------
 
 function newState() {
-    return { version: 1, params: [], recipes: [], index: 0, file: "", dirty: false };
+    return { version: 1, params: [], recipes: [], index: 0, file: "", dirty: false, batch: { enabled: false, sendParams: false, selected: [] } };
 }
 
 // The widget value may come from a shared workflow: treat it as untrusted.
@@ -482,6 +496,14 @@ function parseState(raw) {
     st.index = st.recipes.length ? clamp(Number.isInteger(data.index) ? data.index : 0, 0, st.recipes.length - 1) : 0;
     st.file = cleanLabel(data.file, 200);
     st.dirty = data.dirty === true;
+    if (isPlainObject(data.batch)) {
+        const selected = Array.isArray(data.batch.selected) ? data.batch.selected : [];
+        st.batch = {
+            enabled: data.batch.enabled === true,
+            sendParams: data.batch.sendParams === true,
+            selected: [...new Set(selected.filter((n) => typeof n === "string").map((n) => cleanLabel(n, MAX_NAME)).filter(Boolean))].slice(0, MAX_RECIPES),
+        };
+    }
     return st;
 }
 
@@ -532,12 +554,111 @@ function resolveParams(node) {
         if (value === undefined) value = defaultValue(target);
         params[`p${s + 1}`] = { type: target.type, value };
     }
-    return { version: 1, params };
+    const config = { version: 1, params };
+    const batch = S(node).batch;
+    if (batch.enabled) {
+        // The queue wrapper below turns this into one prompt per recipe (and
+        // strips it again), so the backend only ever sees one recipe at a time.
+        config.batch = { items: planBatch(connectedSlots(node), S(node).recipes, batch.selected, batch.sendParams) };
+    }
+    return config;
+}
+
+// ---------------------------------------------------------------------------
+// Batch: one prompt per selected recipe
+// ---------------------------------------------------------------------------
+
+const MODEL_EXT = /\.(safetensors|ckpt|pt|pth|bin|gguf|sft|onnx|pkl)$/i;
+
+// A value as text for the plot labels. short: model files lose folder and
+// extension, long texts are cut. Mirrors the XYZ Plot's labels.
+function valueText(type, value, short = true) {
+    let text;
+    if (type === "FLOAT") {
+        text = Number(value).toFixed(4).replace(/0+$/, "").replace(/\.$/, "");
+        if (text === "" || text === "-0") text = "0";
+    } else if (type === "BOOLEAN") {
+        text = value ? "true" : "false";
+    } else {
+        text = String(value);
+    }
+    if (short) {
+        if (MODEL_EXT.test(text)) text = normName(text).split("/").pop().replace(MODEL_EXT, "");
+        text = text.replace(/\s+/g, " ").trim();
+        if (text.length > 40) text = text.slice(0, 39) + "…";
+    } else if (text.length > 200) {
+        text = text.slice(0, 199) + "…";
+    }
+    return text;
+}
+
+// Pure core of a batch run. slots = [{s, key, target, current}] (the connected
+// outputs and the value now on the node); recipes = the recipes on the node;
+// selected = recipe names ticked in the list. Per ticked recipe (in list
+// order) it returns what every connected output gets: the recipe's value, or
+// the node's own value when the recipe has no (usable) entry for it.
+function planBatch(slots, recipes, selected, sendParams) {
+    const wanted = new Set(selected);
+    const items = [];
+    for (const recipe of recipes) {
+        if (!wanted.has(recipe.name)) continue;
+        const { results } = planApply(slots, recipe);
+        const params = {};
+        const short = [];
+        const full = [];
+        const warn = [];
+        for (const { s, target, current } of slots) {
+            const r = results.find((x) => x.s === s);
+            const applied = r?.status === "applied";
+            params[`p${s + 1}`] = { type: target.type, value: applied ? r.value : current };
+            if (applied) {
+                short.push(`${r.key}: ${valueText(target.type, r.value)}`);
+                full.push(`${r.key}: ${valueText(target.type, r.value, false)}`);
+            } else if (r?.status === "rejected") {
+                warn.push(`${recipe.name} / ${r.key}: ${r.reason}`);
+            }
+        }
+        items.push({
+            name: recipe.name,
+            params,
+            label: (sendParams ? [recipe.name, ...short].join("\n") : recipe.name).slice(0, MAX_LABEL),
+            full: (sendParams ? [recipe.name, ...full].join("\n") : recipe.name).slice(0, MAX_LABEL * 2),
+            warn,
+        });
+    }
+    return items;
+}
+
+function connectedSlots(node) {
+    const slots = [];
+    for (let s = 0; s < slotCount(node); s++) {
+        const target = slotTarget(node, s);
+        if (!target) continue;
+        let current = param(node, s).value;
+        if (current === undefined) current = defaultValue(target);
+        slots.push({ s, key: paramKey(node, s, target), target, current });
+    }
+    return slots;
 }
 
 // ---------------------------------------------------------------------------
 // Dynamic outputs
 // ---------------------------------------------------------------------------
+
+// Workflows saved before the xyz_info output existed have recipe_name, p1 ..
+// pn: insert the new output and move the saved links of p1 .. pn with it.
+function migrateOutputs(node) {
+    const outs = node.outputs;
+    if (!Array.isArray(outs) || !outs.length || outs[1]?.name === XYZ_OUTPUT) return;
+    outs.splice(1, 0, { name: XYZ_OUTPUT, type: XYZ_INFO_TYPE, links: null });
+    const links = node.graph?.links;
+    for (let i = FIRST_PARAM_OUTPUT; i < outs.length; i++) {
+        for (const id of outs[i]?.links ?? []) {
+            const link = links?.get ? links.get(id) : links?.[id];
+            if (link) link.origin_slot = i;
+        }
+    }
+}
 
 function updateOutputSlot(node, s, ignoreLinkId) {
     const output = node.outputs?.[s + FIRST_PARAM_OUTPUT];
@@ -560,7 +681,7 @@ function setOutputCount(node, wanted) {
         toast(`Output p${lowest} is still connected - disconnect it first.`);
         n = lowest;
     }
-    while (node.outputs.length - FIRST_PARAM_OUTPUT < n) node.addOutput(`p${node.outputs.length}`, "*");
+    while (node.outputs.length - FIRST_PARAM_OUTPUT < n) node.addOutput(`p${node.outputs.length - FIRST_PARAM_OUTPUT + 1}`, "*");
     while (node.outputs.length - FIRST_PARAM_OUTPUT > n) {
         if (node.outputs[node.outputs.length - 1]?.links?.length) break; // never drop a connected output
         node.removeOutput(node.outputs.length - 1);
@@ -627,6 +748,11 @@ const PANEL_CSS = `
 .mykee-rc-status.ok { color:#8fd18f; }
 .mykee-rc-status.bad { color:#f77; opacity:1; }
 .mykee-rc-check { display:flex; gap:6px; align-items:center; cursor:pointer; }
+.mykee-rc-batch { display:flex; flex-direction:column; gap:6px; flex:1 1 auto; min-height:0; }
+.mykee-rc-list { flex:1 1 auto; min-height:80px; overflow-y:auto; border:1px solid var(--border-color, #444);
+  border-radius:4px; padding:3px 6px; background:var(--comfy-input-bg, #222); }
+.mykee-rc-list label { display:flex; gap:6px; align-items:center; cursor:pointer; padding:1px 0; }
+.mykee-rc-list label span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 `;
 
 function ensureCss() {
@@ -1062,6 +1188,120 @@ function applyRecipeToNode(node, recipe) {
 }
 
 // ---------------------------------------------------------------------------
+// Queue fan-out: one prompt per ticked recipe
+// ---------------------------------------------------------------------------
+
+const isLinkTo = (value, key) => Array.isArray(value) && value.length === 2 && String(value[0]) === key;
+
+// The batch in a prompt, or null. The batch description is what the node's
+// serializeValue put into recipe_config; it comes through the prompt, so it is
+// validated here before anything is queued.
+function batchFromPrompt(prompt) {
+    const output = prompt?.output;
+    if (!output) return null;
+    const found = [];
+    for (const [key, entry] of Object.entries(output)) {
+        if (entry?.class_type !== NODE_NAME) continue;
+        let config;
+        try {
+            config = JSON.parse(entry.inputs?.recipe_config ?? "{}");
+        } catch {
+            continue;
+        }
+        if (isPlainObject(config?.batch) && Array.isArray(config.batch.items)) found.push({ key, items: config.batch.items });
+    }
+    if (!found.length) return null;
+    if (found.length > 1) {
+        throw new Error("Mykee Recipe: only one Recipe node with Batch switched on is supported per workflow. Switch it off on the others.");
+    }
+    if (Object.values(output).some((entry) => PLOT_CLASSES.has(entry?.class_type))) {
+        throw new Error("Mykee Recipe: Batch can't be combined with an XYZ Plot / Simple X Plot node (both fan out the queue). Mute or bypass the plot node, or switch Batch off.");
+    }
+    const { key } = found[0];
+    const items = found[0].items.slice(0, MAX_RECIPES);
+    if (!items.length) {
+        throw new Error("Mykee Recipe: Batch is on but no recipe is ticked on the Batch tab.");
+    }
+    const valid = items.every(
+        (it) => isPlainObject(it) && typeof it.name === "string" && isPlainObject(it.params)
+            && typeof it.label === "string" && typeof it.full === "string"
+    );
+    if (!valid) throw new Error("Mykee Recipe: the batch description is invalid - reload the page and try again.");
+    return { key, items };
+}
+
+// The prompt for one recipe: the links from p1 .. pn become the recipe's
+// literal values (exactly what a Primitive node would put there), so ComfyUI's
+// cache only re-runs what really differs between two recipes. The Recipe node
+// itself gets the recipe's name and the batch description for xyz_info.
+function buildBatchOutput(output, key, items, cell, runId) {
+    const item = items[cell];
+    const cellOutput = { ...output };
+    for (const [k, entry] of Object.entries(output)) {
+        if (!entry?.inputs) continue;
+        let inputs = null;
+        for (const [name, value] of Object.entries(entry.inputs)) {
+            if (!isLinkTo(value, key) || !Number.isInteger(value[1]) || value[1] < FIRST_PARAM_OUTPUT) continue;
+            const p = item.params[`p${value[1] - FIRST_PARAM_OUTPUT + 1}`];
+            if (!p || !own(p, "value")) continue;
+            inputs ??= { ...entry.inputs };
+            inputs[name] = p.value;
+        }
+        if (inputs) cellOutput[k] = { ...entry, inputs };
+    }
+    const source = cellOutput[key];
+    cellOutput[key] = {
+        ...source,
+        inputs: {
+            ...source.inputs,
+            recipe_name: item.name,
+            recipe_config: JSON.stringify({
+                version: 1,
+                params: item.params,
+                batch: {
+                    run_id: runId,
+                    cell,
+                    labels: items.map((it) => it.label),
+                    full: items.map((it) => it.full),
+                },
+            }),
+        },
+    };
+    return cellOutput;
+}
+
+function notify(detail, severity = "info", life = 5000) {
+    const t = app.extensionManager?.toast;
+    if (t?.add) t.add({ severity, summary: "Mykee Recipe", detail, life });
+    else console.info("[Mykee Recipe] " + detail);
+}
+
+const baseQueuePrompt = api.queuePrompt;
+api.queuePrompt = async function (number, prompt, ...rest) {
+    const plan = batchFromPrompt(prompt);
+    if (!plan) return baseQueuePrompt.call(this, number, prompt, ...rest);
+    const { key, items } = plan;
+    if (items.length > BATCH_CONFIRM_LIMIT) {
+        const ok = window.confirm(`Mykee Recipe: this will queue ${items.length} prompts (one per recipe). Continue?`);
+        if (!ok) throw new Error("Mykee Recipe: queueing cancelled.");
+    }
+    const warnings = items.flatMap((it) => (Array.isArray(it.warn) ? it.warn.map(String) : []));
+    if (warnings.length) {
+        notify(`${warnings.length} value${warnings.length === 1 ? "" : "s"} not applied (the node's own value is used): ${warnings.slice(0, 3).join(" | ")}`, "warn", 10000);
+    }
+    const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    let response;
+    for (let cell = 0; cell < items.length; cell++) {
+        const output = buildBatchOutput(prompt.output, key, items, cell, runId);
+        response = await baseQueuePrompt.call(this, number, { ...prompt, output }, ...rest);
+        const hasErrors = response?.node_errors && Object.keys(response.node_errors).length > 0;
+        if (hasErrors || !response?.prompt_id) return response; // let ComfyUI show the error
+    }
+    notify(`Batch queued: ${items.length} recipe${items.length === 1 ? "" : "s"}.`, "info", 3000);
+    return response;
+};
+
+// ---------------------------------------------------------------------------
 // Node setup
 // ---------------------------------------------------------------------------
 
@@ -1169,6 +1409,80 @@ function setupNode(node) {
     });
     recipeDom.serialize = false;
 
+    // --- Batch tab -------------------------------------------------------
+    const batchOn = el("input", { type: "checkbox" });
+    const sendOn = el("input", { type: "checkbox" });
+    const allBtn = el("button", { textContent: "Select All", title: "Tick every recipe" });
+    const noneBtn = el("button", { textContent: "Select None", title: "Untick every recipe" });
+    const batchCount = el("span", { className: "mykee-rc-status" });
+    const batchList = el("div", { className: "mykee-rc-list" });
+    const batchBody = el("div", { className: "mykee-rc-batch" }, [
+        el("label", { className: "mykee-rc-check", title: "Also write the parameter names and values under the recipe name in the plot labels (xyz_info)" }, [
+            sendOn, el("span", { textContent: "Send parameters (names and values under the recipe name in the plot)" }),
+        ]),
+        el("div", { className: "mykee-rc-row" }, [allBtn, noneBtn, batchCount]),
+        batchList,
+    ]);
+    const batchPane = el("div", { className: "mykee-rc-pane mykee-rc" }, [
+        el("label", { className: "mykee-rc-check", title: "Off: the node works as before. On: Run queues one prompt per ticked recipe." }, [
+            batchOn, el("span", { textContent: "Batch - run the ticked recipes one after another" }),
+        ]),
+        batchBody,
+    ]);
+    const batchDom = node.addDOMWidget("recipe_batch", "MYKEE_RECIPE_BATCH", batchPane, {
+        serialize: false,
+        getMinHeight: () => BATCH_PANE_MIN_HEIGHT,
+    });
+    batchDom.serialize = false;
+
+    const showBatch = () => {
+        const st = S(node);
+        batchOn.checked = st.batch.enabled;
+        sendOn.checked = st.batch.sendParams;
+        batchBody.style.display = st.batch.enabled ? "" : "none";
+        batchList.replaceChildren();
+        const chosen = new Set(st.batch.selected);
+        for (const recipe of st.recipes) {
+            const box = el("input", { type: "checkbox", checked: chosen.has(recipe.name) });
+            box.addEventListener("change", () => {
+                const set = new Set(S(node).batch.selected);
+                if (box.checked) set.add(recipe.name);
+                else set.delete(recipe.name);
+                S(node).batch.selected = [...set];
+                updateBatchCount();
+                persist(node);
+            });
+            batchList.append(el("label", { title: recipe.name }, [box, el("span", { textContent: recipe.name })]));
+        }
+        if (!st.recipes.length) batchList.append(el("div", { className: "mykee-rc-muted", textContent: "No recipe on the node - load a recipe file on the JSON file tab." }));
+        updateBatchCount();
+    };
+    const updateBatchCount = () => {
+        const st = S(node);
+        const names = new Set(st.recipes.map((r) => r.name));
+        const n = st.batch.selected.filter((x) => names.has(x)).length;
+        batchCount.textContent = `${n} of ${st.recipes.length} ticked`;
+    };
+    batchOn.addEventListener("change", () => {
+        S(node).batch.enabled = batchOn.checked;
+        showBatch();
+        persist(node);
+    });
+    sendOn.addEventListener("change", () => {
+        S(node).batch.sendParams = sendOn.checked;
+        persist(node);
+    });
+    allBtn.addEventListener("click", () => {
+        S(node).batch.selected = S(node).recipes.map((r) => r.name);
+        showBatch();
+        persist(node);
+    });
+    noneBtn.addEventListener("click", () => {
+        S(node).batch.selected = [];
+        showBatch();
+        persist(node);
+    });
+
     // --- JSON file tab ---------------------------------------------------
     const jsonArea = isolate(el("textarea", { spellcheck: false, placeholder: "The recipe file's content (JSON) appears here." }));
     const jsonStatus = el("div", { className: "mykee-rc-status" });
@@ -1221,6 +1535,7 @@ function setupNode(node) {
 
     node._mykeeRcRefreshAll = () => {
         showRecipe();
+        showBatch();
         showJson();
         persist(node);
     };
@@ -1512,9 +1827,10 @@ function setupNode(node) {
     node._mykeeRcTabWidgets = {
         params: [slotsW, paramsDom, nameW, sendBtn],
         recipe: [recipeDom],
+        batch: [batchDom],
         json: [jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom],
     };
-    const ordered = [tabBar, slotsW, paramsDom, nameW, sendBtn, recipeDom, jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom, configW];
+    const ordered = [tabBar, slotsW, paramsDom, nameW, sendBtn, recipeDom, batchDom, jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom, configW];
     const rest = node.widgets.filter((w) => !ordered.includes(w));
     node.widgets = [...ordered, ...rest];
 
@@ -1556,6 +1872,7 @@ app.registerExtension({
             const ret = onConfigure?.apply(this, arguments);
             if (!this._mykeeRcTabWidgets) return ret; // setupNode did not run
             this._mykeeConfiguredAt = Date.now();
+            migrateOutputs(this); // a workflow saved before the xyz_info output existed
             // The saved widget values have just been restored: re-read the state
             // (a workflow may come from anywhere, so it is cleaned again) and make
             // the outputs match the saved slot count.
@@ -1617,4 +1934,4 @@ app.registerExtension({
 });
 
 // Exposed for the unit tests only (nothing in ComfyUI reads this).
-export const __testing = { cleanDoc, cleanRecipe, cleanParam, cleanValue, matchOption, coerceValue, planApply, defaultValue, parseState, stepFor };
+export const __testing = { planBatch, valueText, batchFromPrompt, buildBatchOutput, migrateOutputs, cleanDoc, cleanRecipe, cleanParam, cleanValue, matchOption, coerceValue, planApply, defaultValue, parseState, stepFor };

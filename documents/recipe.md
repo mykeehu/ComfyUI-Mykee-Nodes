@@ -14,7 +14,7 @@ then holds the value, and the connected widget receives it.
 ## Setup
 
 1. Add **Mykee Recipe**. Set **slots** (1 - 10) to the number of parameters
-   you need; the node shows that many outputs, `p1` ... `p10`.
+   you need; the node shows that many outputs, `p1` ... `p10` (below `recipe_name` and `xyz_info`).
 2. Drag a parameter output (`p1`, `p2`, ...) onto a widget (the same way a
    Primitive node is connected): `cfg`, `sampler_name`, `ckpt_name`, a text
    box, a switch, ... The output takes over the widget's type and gets a
@@ -25,9 +25,10 @@ then holds the value, and the connected widget receives it.
    **➕ Send to Recipe**.
 
 The **recipe_name** output carries the name of the current recipe (cleaned like
-a file name) - handy as a file name prefix on a Save Image node.
+a file name) - handy as a file name prefix on a Save Image node. The
+**xyz_info** output below it goes to the XYZ Plot Assembler (see Batch).
 
-## The three tabs
+## The four tabs
 
 **Parameters** - the connected parameters: key, the widget it drives, and a
 value editor (number, text box, checkbox or the widget's own list). Below:
@@ -48,6 +49,8 @@ value editor (number, text box, checkbox or the widget's own list). Below:
   stored automatically; invalid text is never stored, and moving on (pager,
   Load, Save) is blocked until it is fixed.
 
+**Batch** - run several recipes one after another (see below).
+
 **JSON file** - the whole file as editable JSON text, plus:
 
 - **json_name** - the file name (without `.json`; a sub-folder such as
@@ -59,6 +62,40 @@ value editor (number, text box, checkbox or the widget's own list). Below:
 
 Saving to a file other than the one you loaded asks before overwriting an
 existing file; loading asks before it throws away unsaved changes.
+
+## Batch
+
+On the **Batch** tab, a switch (off by default) turns batch mode on. Then a list
+of the recipes on the node appears, each with a check box, plus **Select All**
+and **Select None**. When you press Run, one prompt is queued for every ticked
+recipe, in list order, one after another.
+
+In each prompt the links from the `p` outputs are replaced by that recipe's
+values (exactly what a Primitive node would put there), so ComfyUI's cache only
+re-runs what really differs between two recipes - e.g. a checkpoint loader is
+not run again for the next recipe if the model is the same. The same matching
+rules as for Load Recipe apply: an output the recipe has no (usable) entry for
+keeps the value shown on the node (a value that doesn't fit the widget is
+reported when you press Run). `recipe_name` carries the current recipe's name.
+
+**xyz_info** - connect it to a **Mykee XYZ Plot Assembler**: the recipes become
+the columns of one plot (the title says `X: recipe`). Switch **Send parameters**
+on to also write the parameter names and values under the recipe name in the
+plot labels (only the values the recipe sets; long texts are shortened, the
+Assembler's info text keeps them in full). The Assembler is optional - without
+it you simply get one image per recipe.
+
+Notes:
+
+- Only the recipes on the node can be ticked (load a file on the JSON file tab
+  first). The ticks are stored with the workflow, by recipe name.
+- A workflow may have only one Recipe node with Batch on, and Batch can't be
+  combined with an XYZ Plot / Simple X Plot node in the same workflow (both
+  fan out the queue) - mute or bypass one of them. With more than 100 ticked
+  recipes you are asked to confirm.
+- Switched off, the node behaves exactly as before.
+- Workflows saved before `xyz_info` existed are upgraded when loaded (the
+  existing links of `p1` ... are kept).
 
 ## How a recipe finds its targets (the key)
 
@@ -108,7 +145,6 @@ Hand-written shortcuts are accepted and cleaned when loaded: a bare value
 - The recipes are stored in the workflow too (so a workflow carries them), and
   editing recipes never invalidates ComfyUI's cache - only the values of the
   connected outputs reach the backend.
-- Running **all** recipes of a file in one go is not part of this node yet.
 
 ## Security
 
