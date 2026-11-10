@@ -8,6 +8,8 @@
 </p>
 
 
+Only need one axis? See the simpler [Mykee Simple X Plot](simple-x-plot.md) (same Assembler).
+
 A universal XYZ plot: **any widget parameter of any node** can be an axis
 (cfg, steps, sampler_name, ckpt_name, lora strength, seed, a prompt text,
 a boolean switch, ...). No per-node axis types to pick from a list - you

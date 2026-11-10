@@ -29,6 +29,11 @@ ANY node:
 The x / y / z outputs are only really used when a prompt reaches the server
 without the frontend (e.g. an API call): then the node outputs the values
 of cell 0.
+
+- "Mykee Simple X Plot" is the one-axis version of the controller: only the
+  X axis (no Y / Z, no loop order). It outputs the same xyz_info, so it
+  connects to the very same Assembler; the plot is a single row of cells.
+  Both controllers share the same frontend code (web/mykee_xyz_plot.js).
 """
 
 import json
@@ -253,56 +258,127 @@ class MykeeXYZPlot:
 
     def main(self, xyz_config="{}", loop_order=None, skip_if_unchanged=True, seed=None):
         # loop_order and skip_if_unchanged are read by the frontend when it queues the cells; nothing to do here.
-        cfg = _parse_config(xyz_config)
-        axes = _active_axes(cfg)
-        dims = [len(a["values"]) if a else 1 for a in axes]
-        total = dims[0] * dims[1] * dims[2]
+        values, seed_out, info = _controller_cell(xyz_config, seed, "Mykee XYZ Plot", max_axes=3)
+        return (values[0], values[1], values[2], seed_out, info)
 
+
+def _controller_cell(xyz_config, seed, tag, max_axes):
+    """Shared by the controller nodes: resolves the cell this prompt renders.
+
+    Returns (values, seed_out, info): the cell's value per axis (None for an
+    unused axis), the pass-through seed and the xyz_info dict for the
+    Assembler. Axes beyond max_axes are ignored, whatever the config says."""
+    cfg = _parse_config(xyz_config)
+    axes = _active_axes(cfg)
+    for i in range(max_axes, 3):
+        axes[i] = None
+    dims = [len(a["values"]) if a else 1 for a in axes]
+    total = dims[0] * dims[1] * dims[2]
+
+    try:
         cell = int(cfg.get("cell", 0) or 0)
-        run_id = str(cfg.get("run_id") or "")
-        if not run_id:
-            # Queued without the ComfyUI frontend: there is no fan-out, so
-            # only cell 0 is rendered.
-            run_id = f"single-{time.time_ns()}"
-            print(
-                "[Mykee XYZ Plot] No run id in the prompt (queued without the "
-                "ComfyUI frontend?) - only the first cell is rendered."
-            )
-        if not 0 <= cell < total:
-            raise ValueError(f"[Mykee XYZ Plot] Cell index {cell} is out of range (0..{total - 1}).")
+    except (TypeError, ValueError):
+        cell = 0
+    run_id = str(cfg.get("run_id") or "")
+    if not run_id:
+        # Queued without the ComfyUI frontend: there is no fan-out, so
+        # only cell 0 is rendered.
+        run_id = f"single-{time.time_ns()}"
+        print(
+            f"[{tag}] No run id in the prompt (queued without the "
+            "ComfyUI frontend?) - only the first cell is rendered."
+        )
+    if not 0 <= cell < total:
+        raise ValueError(f"[{tag}] Cell index {cell} is out of range (0..{total - 1}).")
 
-        _timing(run_id)  # stamps the start time on the run's first cell
-        idx = _cell_indices(cell, dims)
-        values = []
-        info_axes = []
-        for axis, i in zip(axes, idx):
-            if axis is None:
-                values.append(None)
-                info_axes.append(None)
-                continue
-            value_type = str(axis.get("type", "STRING")).upper()
-            values.append(_cast(axis["values"][i], value_type))
-            info_axes.append(
-                {
-                    "label": str(axis.get("label") or axis.get("param") or "?"),
-                    "value_labels": [_format_value(v, value_type) for v in axis["values"]],
-                    # Unshortened (folder + extension kept) - used by the info text.
-                    "value_full": [_format_value(v, value_type, short=False) for v in axis["values"]],
-                }
-            )
+    _timing(run_id)  # stamps the start time on the run's first cell
+    idx = _cell_indices(cell, dims)
+    values = []
+    info_axes = []
+    for axis, i in zip(axes, idx):
+        if axis is None:
+            values.append(None)
+            info_axes.append(None)
+            continue
+        value_type = str(axis.get("type", "STRING")).upper()
+        values.append(_cast(axis["values"][i], value_type))
+        info_axes.append(
+            {
+                "label": str(axis.get("label") or axis.get("param") or "?"),
+                "value_labels": [_format_value(v, value_type) for v in axis["values"]],
+                # Unshortened (folder + extension kept) - used by the info text.
+                "value_full": [_format_value(v, value_type, short=False) for v in axis["values"]],
+            }
+        )
 
-        info = {
-            "run_id": run_id,
-            "cell": cell,
-            "total": total,
-            "dims": dims,
-            "axes": info_axes,
-            "seed": seed,
-            # Set by the frontend when only nodes after the Assembler changed:
-            # the Assembler then hands out the plot it already finished.
-            "reuse": bool(cfg.get("reuse")),
+    info = {
+        "run_id": run_id,
+        "cell": cell,
+        "total": total,
+        "dims": dims,
+        "axes": info_axes,
+        "seed": seed,
+        # Set by the frontend when only nodes after the Assembler changed:
+        # the Assembler then hands out the plot it already finished.
+        "reuse": bool(cfg.get("reuse")),
+    }
+    return values, (int(seed) if seed is not None else 0), info
+
+
+class MykeeSimpleXPlot:
+    """One-axis XYZ Plot: the same controller, with the X axis only."""
+
+    CATEGORY = "Mykee/Utils"
+    FUNCTION = "main"
+    RETURN_TYPES = (ANY, "INT", XYZ_INFO_TYPE)
+    RETURN_NAMES = ("x", "seed", "xyz_info")
+    OUTPUT_TOOLTIPS = (
+        "Drag onto any widget parameter to use it as the X axis (one image per value).",
+        "The optional seed input, passed through unchanged (0 if not connected).",
+        "Connect to the Mykee XYZ Plot Assembler.",
+    )
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                # Holds the node's settings (JSON). Hidden: the frontend draws
+                # its own panel, and fills in the resolved values at queue time.
+                "xyz_config": (
+                    "STRING",
+                    {"default": "{}", "hidden": True, "socketless": True},
+                ),
+                "skip_if_unchanged": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": (
+                            "On: running again with NOTHING changed (same values, axis, seed, settings) "
+                            "does not re-generate the plot - the previous result stays. Any change queues "
+                            "the plot as usual. Off: always generate the whole plot again."
+                        ),
+                    },
+                ),
+            },
+            "optional": {
+                "seed": (
+                    "INT",
+                    {
+                        "forceInput": True,
+                        "tooltip": (
+                            "Optional. Passed through to the seed output and "
+                            "printed in the plot's title, so the table documents "
+                            "which seed it was made with."
+                        ),
+                    },
+                ),
+            },
         }
-        return (values[0], values[1], values[2], int(seed) if seed is not None else 0, info)
+
+    def main(self, xyz_config="{}", skip_if_unchanged=True, seed=None):
+        # skip_if_unchanged is read by the frontend when it queues the cells; nothing to do here.
+        values, seed_out, info = _controller_cell(xyz_config, seed, "Mykee Simple X Plot", max_axes=1)
+        return (values[0], seed_out, info)
 
 
 # ---------------------------------------------------------------------------
@@ -662,10 +738,12 @@ class MykeeXYZPlotAssembler:
 
 NODE_CLASS_MAPPINGS = {
     "MykeeXYZPlot": MykeeXYZPlot,
+    "MykeeSimpleXPlot": MykeeSimpleXPlot,
     "MykeeXYZPlotAssembler": MykeeXYZPlotAssembler,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "MykeeXYZPlot": "Mykee XYZ Plot",
+    "MykeeSimpleXPlot": "Mykee Simple X Plot",
     "MykeeXYZPlotAssembler": "Mykee XYZ Plot Assembler",
 }

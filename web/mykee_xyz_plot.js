@@ -1,5 +1,7 @@
 /*
- * Mykee XYZ Plot - frontend.
+ * Mykee XYZ Plot - frontend (shared by "Mykee XYZ Plot" and "Mykee Simple X
+ * Plot"; the simple one is the same controller with the X axis only - see
+ * PLOT_NODES below for what differs).
  *
  * The node's x / y / z outputs are "*" typed. Dragging one onto a widget
  * of any node turns that widget into a plot axis: the output takes over the
@@ -44,12 +46,17 @@
 import { app } from "../../scripts/app.js";
 import { api } from "../../scripts/api.js";
 
-const NODE_NAME = "MykeeXYZPlot";
+// The controller nodes this frontend drives. axes = number of axis outputs
+// (they are always the first output slots); seedSlot = output slot of the
+// pass-through seed.
+const PLOT_NODES = {
+    MykeeXYZPlot: { axes: 3, seedSlot: 3 },
+    MykeeSimpleXPlot: { axes: 1, seedSlot: 1 },
+};
 const CONFIG_WIDGET = "xyz_config";
 const AXES = ["X", "Y", "Z"]; // output slots 0, 1, 2
 const OUTPUT_NAMES = ["x", "y", "z"];
 const SUPPORTED_TYPES = ["INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"];
-const SEED_SLOT = 3; // output slot of the pass-through seed
 const CELL_CONFIRM_LIMIT = 100;
 const RANDOM_SEED_MAX = 2 ** 32;
 const MIN_WIDTH = 380;
@@ -72,6 +79,15 @@ function toast(detail, severity = "warn") {
 function getLink(graph, id) {
     if (!graph || id == null) return undefined;
     return graph.getLink?.(id) ?? graph.links?.get?.(id) ?? graph.links?.[id];
+}
+
+function plotSpec(nodeOrClass) {
+    const name = typeof nodeOrClass === "string" ? nodeOrClass : nodeOrClass?.comfyClass ?? nodeOrClass?.type;
+    return PLOT_NODES[name] ?? null;
+}
+
+function axisCount(node) {
+    return plotSpec(node)?.axes ?? 3;
 }
 
 function readState(node) {
@@ -228,7 +244,10 @@ function axisValues(target, axisState) {
 // The config the backend gets (via serializeValue): only resolved values.
 function resolveConfig(node) {
     const state = readState(node);
+    // Always 3 entries (the backend and the queue fan-out work on X / Y / Z);
+    // the axes a node doesn't have stay null.
     const axes = AXES.map((axis, slot) => {
+        if (slot >= axisCount(node)) return null;
         const target = axisTarget(node, slot);
         if (!target) return null;
         const { values } = axisValues(target, state.axes[axis]);
@@ -246,6 +265,7 @@ function isLinkTo(value, sourceKey) {
 }
 
 function buildCellOutput(output, sourceKey, config, cell, dims, runId, reuse = false) {
+    const seedSlot = plotSpec(output[sourceKey]?.class_type).seedSlot;
     const [nx, ny] = dims;
     const index = [cell % nx, Math.floor(cell / nx) % ny, Math.floor(cell / (nx * ny))];
     const slotValues = {};
@@ -253,7 +273,7 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId, reuse = f
         if (axis) slotValues[slot] = axis.values[index[slot]];
     });
 
-    // The "seed" output (slot 3) just passes its optional input through. Links
+    // The "seed" output just passes its optional input through. Links
     // to it are re-pointed at whatever feeds that input (a link, or 0 when
     // unconnected), so the nodes behind it do not depend on the controller's
     // per-cell config and stay cached between cells and runs.
@@ -268,7 +288,7 @@ function buildCellOutput(output, sourceKey, config, cell, dims, runId, reuse = f
             if (isLinkTo(value, sourceKey) && value[1] in slotValues) {
                 inputs ??= { ...entry.inputs };
                 inputs[name] = slotValues[value[1]];
-            } else if (isLinkTo(value, sourceKey) && value[1] === SEED_SLOT) {
+            } else if (isLinkTo(value, sourceKey) && value[1] === seedSlot) {
                 inputs ??= { ...entry.inputs };
                 inputs[name] = seedReplacement;
             }
@@ -317,9 +337,9 @@ function cellSequence(dims, loopOrder) {
 }
 
 function findPlotNode(output) {
-    const keys = Object.keys(output ?? {}).filter((key) => output[key]?.class_type === NODE_NAME);
+    const keys = Object.keys(output ?? {}).filter((key) => plotSpec(output[key]?.class_type));
     if (keys.length > 1) {
-        throw new Error("Mykee XYZ Plot: only one active XYZ Plot node is supported per workflow. Mute or bypass the others.");
+        throw new Error("Mykee XYZ Plot: only one active XYZ Plot / Simple X Plot node is supported per workflow. Mute or bypass the others.");
     }
     return keys[0] ?? null;
 }
@@ -339,7 +359,7 @@ function planFromPrompt(prompt) {
 
     // An axis output that is still linked in the prompt must have values,
     // otherwise its target would receive None.
-    for (let slot = 0; slot < 3; slot++) {
+    for (let slot = 0; slot < plotSpec(output[sourceKey].class_type).axes; slot++) {
         const used = Object.values(output).some((entry) =>
             Object.values(entry?.inputs ?? {}).some((v) => isLinkTo(v, sourceKey) && v[1] === slot)
         );
@@ -692,7 +712,9 @@ function setupPlotNode(node) {
         const updateTotal = () => {
             const counts = counters.map((c) => (c ? c() : 1));
             const cells = counts.reduce((a, b) => a * Math.max(1, b), 1);
-            total.textContent = `Plot: ${counts.join(" × ")} = ${cells} image${cells === 1 ? "" : "s"}`;
+            total.textContent = counts.length === 1
+                ? `Plot: ${cells} image${cells === 1 ? "" : "s"}`
+                : `Plot: ${counts.join(" × ")} = ${cells} image${cells === 1 ? "" : "s"}`;
         };
         const onChange = () => {
             writeState(node, state);
@@ -700,7 +722,7 @@ function setupPlotNode(node) {
             node.graph?.setDirtyCanvas?.(true, false);
         };
         panel.append(total);
-        AXES.forEach((axis, slot) => {
+        AXES.slice(0, axisCount(node)).forEach((axis, slot) => {
             const { box, updateCount } = renderAxis(node, axis, slot, state, onChange);
             counters.push(updateCount ?? null);
             panel.append(box);
@@ -722,7 +744,7 @@ function setupPlotNode(node) {
 // Rough panel height per axis type, used until the real one is measured.
 function estimateHeight(node) {
     let height = 26; // "Plot: ..." line
-    for (let slot = 0; slot < 3; slot++) {
+    for (let slot = 0; slot < axisCount(node); slot++) {
         const target = axisTarget(node, slot);
         let box = 34; // not connected: header only
         if (target?.type === "INT") box = 124;
@@ -779,7 +801,7 @@ app.registerExtension({
     name: "Mykee.XYZPlot",
 
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_NAME) return;
+        if (!plotSpec(nodeData.name)) return;
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -793,7 +815,7 @@ app.registerExtension({
             const ret = onConfigure?.apply(this, arguments);
             // Target nodes may not exist yet while the graph is loading.
             setTimeout(() => {
-                for (let slot = 0; slot < 3; slot++) updateOutputSlot(this, slot);
+                for (let slot = 0; slot < axisCount(this); slot++) updateOutputSlot(this, slot);
                 this.mykeeXyzRender?.(false);
             }, 50);
             return ret;
@@ -803,7 +825,7 @@ app.registerExtension({
         nodeType.prototype.onConnectionsChange = function (type, slot, connected, linkInfo) {
             const ret = onConnectionsChange?.apply(this, arguments);
             const OUTPUT = window.LiteGraph?.OUTPUT ?? 2;
-            if (type !== OUTPUT || slot > 2) return ret;
+            if (type !== OUTPUT || slot >= axisCount(this)) return ret;
             if (connected && linkInfo && !checkNewLink(this, slot, linkInfo)) return ret;
             if (!connected) {
                 // Reset right away, ignoring the link being removed (it may

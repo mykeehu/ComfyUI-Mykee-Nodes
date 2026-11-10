@@ -129,12 +129,14 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Group Bypasser](documents/group-bypasser.md) | One on/off switch per group, sortable. |
 | [Mykee Seed](documents/seed.md) | Rework of rgthree's Seed node with a lockable seed and history. |
 | [Mykee XYZ Plot / XYZ Plot Assembler](documents/xyz-plot.md) | Universal XYZ plot: any widget of any node can be an axis. |
+| [Mykee Simple X Plot](documents/simple-x-plot.md) | One-axis version of the XYZ Plot (X only, no loop order); uses the same Assembler. |
+| [Mykee Recipe](documents/recipe.md) | Build named recipes (cfg, sampler, model, LoRA, prompt text, ...) from any widget parameter, keep several per JSON file, load them back. |
 
 ## Security notes
 
 ComfyUI itself has no authentication, so do not expose it to untrusted networks (`--listen`, port forwarding, hosted setups) without a reverse proxy / auth in front of it.
 
-The Prompt Template and Model Template nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`). Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind.
+The Prompt Template, Model Template and Recipe nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`, `/mykee/recipes/*`). Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind. The Recipe routes are stricter still: symbolic links in the recipe folder are refused, files over 5 MB are refused, and everything read from or written to a recipe file is validated against a strict schema.
 
 **Third-party code and model files (your responsibility):**
 
