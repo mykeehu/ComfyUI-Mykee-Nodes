@@ -13,6 +13,7 @@
  * Four tabs (same tab bar as the Text Analyzer):
  *
  *   Parameters  the connected parameters with their keys and value editors,
+ *               a recipe picker (loads the picked recipe into the parameters),
  *               the recipe name and "Send to Recipe".
  *   Recipe      the current recipe as editable JSON text, a pager over all the
  *               recipes in the node, "Load Recipe" (recipe -> parameters).
@@ -1348,6 +1349,42 @@ function setupNode(node) {
     sendBtn.serialize = false;
     sendBtn.options = { ...(sendBtn.options || {}), serialize: false };
 
+    // Recipe picker: choosing a recipe loads it into the parameters and fills
+    // in recipe_name, so a new recipe can be made from an existing one right
+    // here (pick, change a value, type a new name, Send to Recipe).
+    const pickerW = node.addWidget("combo", "recipe_picker", "", (value) => {
+        if (!value) return;
+        if (!commitAll(node)) {
+            toast("Fix the JSON text first (see the red status line).");
+            syncRecipePicker();
+            return;
+        }
+        const st = S(node);
+        const index = st.recipes.findIndex((r) => r.name === value);
+        if (index < 0) return;
+        st.index = index;
+        applyRecipeToNode(node, st.recipes[index]);
+        node._mykeeRcRefreshAll?.();
+    }, { values: [""], serialize: false });
+    pickerW.serialize = false;
+    pickerW.tooltip = "Pick a recipe to load it into the parameters (same as 'Load Recipe').";
+
+    // The list follows the recipes on the node; it shows the recipe whose name is in recipe_name.
+    const syncRecipePicker = () => {
+        const names = S(node).recipes.map((r) => r.name);
+        pickerW.options.values = ["", ...names];
+        const current = String(nameW.value || "").trim().toLowerCase();
+        pickerW.value = names.find((n) => n.toLowerCase() === current) ?? "";
+        node.setDirtyCanvas?.(true, true);
+    };
+    node._mykeeRcSyncPicker = syncRecipePicker;
+    const origNameCallback = nameW.callback;
+    nameW.callback = function () {
+        const r = origNameCallback ? origNameCallback.apply(this, arguments) : undefined;
+        syncRecipePicker();
+        return r;
+    };
+
     // The Parameters tab's height always follows its content (grows AND
     // shrinks). The two text-box tabs keep the height the user gave them.
     const measure = () => {
@@ -1537,6 +1574,7 @@ function setupNode(node) {
         showRecipe();
         showBatch();
         showJson();
+        syncRecipePicker();
         persist(node);
     };
 
@@ -1825,12 +1863,12 @@ function setupNode(node) {
     // --- layout: tab bar first, then each tab's widgets in order ---------
     const tabBar = createTabBar(node);
     node._mykeeRcTabWidgets = {
-        params: [slotsW, paramsDom, nameW, sendBtn],
+        params: [slotsW, paramsDom, pickerW, nameW, sendBtn],
         recipe: [recipeDom],
         batch: [batchDom],
         json: [jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom],
     };
-    const ordered = [tabBar, slotsW, paramsDom, nameW, sendBtn, recipeDom, batchDom, jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom, configW];
+    const ordered = [tabBar, slotsW, paramsDom, pickerW, nameW, sendBtn, recipeDom, batchDom, jsonW, pathW, listW, saveBtn, loadBtn, reloadBtn, jsonDom, configW];
     const rest = node.widgets.filter((w) => !ordered.includes(w));
     node.widgets = [...ordered, ...rest];
 

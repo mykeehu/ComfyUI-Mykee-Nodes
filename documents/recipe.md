@@ -34,6 +34,11 @@ a file name) - handy as a file name prefix on a Save Image node. The
 value editor (number, text box, checkbox or the widget's own list). Below:
 `recipe_name` and **Send to Recipe**.
 
+- **recipe_picker** (above `recipe_name`) lists the recipes on the node. Picking
+  one loads it into the parameters and fills in `recipe_name` (same as Load
+  Recipe, no need to switch tabs). To make a new recipe from an existing one:
+  pick it, change a value, type a new `recipe_name`, press Send to Recipe. The
+  picker shows the recipe whose name is in `recipe_name`.
 - A recipe with that name already exists: its entries are **updated** (other
   entries of that recipe are kept). Otherwise a new recipe is added.
 - Two outputs with the same key can't be sent (rename one - the field turns red).
