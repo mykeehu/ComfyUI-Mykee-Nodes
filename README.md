@@ -97,6 +97,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | Node | Description |
 |---|---|
 | [Mykee Color Background](documents/color-background.md) | Composites an image (with optional mask) onto a solid color. |
+| [Mykee Meme Maker](documents/meme-maker.md) | Top / bottom captions on an image, image batch or video - on the picture or in a frame, with any installed font, outline, wrapping and a live preview. |
 | [Mykee Image Switch](documents/image-switch.md) | 2-input image switch with real passthrough when a branch is inactive. |
 | [Mykee Image Switch (Advanced)](documents/image-switch-advanced.md) | Image switch/batch with any number of inputs. |
 | [Mykee Size Switch/Batch](documents/size-switch-batch.md) | Up to 32 width/height pairs with switch or batch output. |
@@ -126,6 +127,8 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | Node | Description |
 |---|---|
 | [Mykee Model Template](documents/model-template.md) | Remembers which CLIP/VAE files belong to which model. |
+| [Mykee Video Info](documents/video-info.md) | Shows a video's size, frame rate, codec and format; outputs width, height, frame rate and the file name with an optional tag. |
+| [Mykee Get Filename](documents/get-filename.md) | Passes any media (image, video, audio, ...) through and outputs the name of the file it was loaded from, with an optional tag. |
 | [Mykee Group Bypasser](documents/group-bypasser.md) | One on/off switch per group, sortable. |
 | [Mykee Seed](documents/seed.md) | Rework of rgthree's Seed node with a lockable seed and history. |
 | [Mykee XYZ Plot / XYZ Plot Assembler](documents/xyz-plot.md) | Universal XYZ plot: any widget of any node can be an axis. |
@@ -136,7 +139,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 
 ComfyUI itself has no authentication, so do not expose it to untrusted networks (`--listen`, port forwarding, hosted setups) without a reverse proxy / auth in front of it.
 
-The Prompt Template, Model Template and Recipe nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`, `/mykee/recipes/*`). Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind. The Recipe routes are stricter still: symbolic links in the recipe folder are refused, files over 5 MB are refused, and everything read from or written to a recipe file is validated against a strict schema.
+The Prompt Template, Model Template and Recipe nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`, `/mykee/recipes/*`). The Meme Maker has two routes of its own (`/mykee/meme/fonts`, `/mykee/meme/preview`); neither takes a file or folder name - fonts are only read from the system's own font folders, and the workflow only stores a font family name. Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind. The Recipe routes are stricter still: symbolic links in the recipe folder are refused, files over 5 MB are refused, and everything read from or written to a recipe file is validated against a strict schema.
 
 **Third-party code and model files (your responsibility):**
 

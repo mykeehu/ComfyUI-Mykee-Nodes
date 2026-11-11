@@ -17,6 +17,7 @@ _NODE_MODULES = [
     "mykee_room_reducer",
     "mykee_stylegan",
     "mykee_image",
+    "mykee_meme_maker",
     "mykee_stripe_remover",
     "mykee_latent_nyquist_notch",
     "mykee_latent_tone_notch",
@@ -37,6 +38,8 @@ _NODE_MODULES = [
     "mykee_text_injection",
     "mykee_size_switch",
     "mykee_wh_resizer",
+    "mykee_video_info",
+    "mykee_get_filename",
 ]
 
 NODE_CLASS_MAPPINGS = {}
