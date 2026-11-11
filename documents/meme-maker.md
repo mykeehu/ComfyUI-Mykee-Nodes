@@ -41,6 +41,15 @@ connected Primitive / text node's text is used in the preview too. The
 background picture is not saved with the workflow - it comes back after the
 next run.
 
+**The connected picture.** As soon as an image or a video is connected, the
+preview shows it - before the node has run: the file of the loader behind the
+input (Load Image, Load Video, ...) is loaded straight from ComfyUI, with its
+own size as the preview's shape (the first frame of a video). This works when
+there is a loader with a file behind the input and the browser can show that
+file; a picture that is generated in the workflow appears after the first run,
+as before. If both **image** and **video** are connected and active, the
+preview stays gray and says that only one of them should be connected.
+
 Under the preview you get a warning if the font was not found or has no glyph
 for one of the letters (for example a meme font without `ő` / `ű`).
 
@@ -54,7 +63,12 @@ connected to either of them.
 - the alignment (left / center / right),
 - `lines`: **0 = automatic wrap** (as many lines as needed, the font size is
   not touched); **N = at most N lines** - if the text needs more, the font is
-  shrunk until it fits.
+  shrunk until it fits,
+- `top_margin` / `bottom_margin`: extra distance of the caption from the top /
+  bottom edge, in % of the image **height** (0 = right at the padding, 50 =
+  pushed in by half the picture). Use it to place a caption lower or higher on
+  the picture. In **frame** placement it is empty room at the outer edge of
+  the band (the band grows by it in *fit text* mode).
 
 The `font_size` is the **ceiling**: with a line limit the font is only ever
 made smaller, never larger, to fit the limit (e.g. a long text at limit 1 gets

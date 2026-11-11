@@ -16,7 +16,11 @@ import { api } from "../../scripts/api.js";
  *     (POST /mykee/meme/preview), so the font, wrapping and outline are what
  *     the node will produce. It is drawn on a gray picture of the last seen
  *     input size (known after the first run, 1024x576 before) and uses the
- *     text of a connected Primitive / text node when it can read it.
+ *     text of a connected Primitive / text node when it can read it;
+ *   - the connected picture under the preview before the first run: the file
+ *     of the loader behind the image / video input is shown through ComfyUI's
+ *     own /view route (the first frame of a video). With both inputs connected
+ *     and active the preview says that only one should be connected.
  *
  * The node's height always follows its content (the preview's height follows
  * the picture's shape); the width stays the user's.
@@ -38,6 +42,12 @@ const TEXT_FIELDS = ["top_text", "bottom_text"]; // always visible above the tab
 const NO_FONT = "(default)";
 const PREVIEW_GRAY = "#707070";
 const SWATCH_HEIGHT = 40; // 24px swatch + a gap below it
+const RUN_KEY_PROP = "mykee_meme_run_key"; // which connected file the last run's size / first frame belong to
+const BOTH_MESSAGE = "For the preview, connect only one of image / video.";
+const MEDIA_EXT = {
+    image: /\.(png|jpe?g|jfif|webp|gif|bmp|avif)$/i,
+    video: /\.(mp4|m4v|mov|mkv|webm|ogv)$/i,
+};
 
 const TABS = [
     { id: "text", label: "Text" },
@@ -47,8 +57,8 @@ const TABS = [
 
 // widget name -> tab
 const TAB_OF = {
-    top_font_size: "text", top_align: "text", top_lines: "text",
-    bottom_font_size: "text", bottom_align: "text", bottom_lines: "text",
+    top_font_size: "text", top_align: "text", top_lines: "text", top_margin: "text",
+    bottom_font_size: "text", bottom_align: "text", bottom_lines: "text", bottom_margin: "text",
     font_picker: "style", reload_fonts: "style", bold: "style", italic: "style",
     uppercase: "style", text_color: "style", text_color_swatch: "style", stroke_color: "style",
     stroke_color_swatch: "style", stroke_width: "style", line_height: "style",
@@ -60,6 +70,7 @@ const PARAM_KEYS = [
     "top_text", "bottom_text", "font", "top_font_size", "bottom_font_size", "bold", "italic", "uppercase", "text_color",
     "stroke_color", "stroke_width", "line_height", "padding", "placement", "frame_color", "frame_width", "frame_width_mode",
     "frame_height_mode", "frame_height", "top_align", "top_lines", "bottom_align", "bottom_lines",
+    "top_margin", "bottom_margin",
 ];
 // settings of the preview only (not sent as caption settings)
 const COLOR_WIDGETS = ["text_color", "stroke_color", "frame_color"];
@@ -247,6 +258,124 @@ function updateButtonCursor(node) {
     }
 }
 
+// ---- the connected picture (before the node has run) ------------------------
+
+function linkOf(node, id) {
+    const links = node.graph?.links;
+    if (!links || id == null) return null;
+    return (typeof links.get === "function" ? links.get(id) : links[id]) ?? null;
+}
+
+// The link on an input, when the node it comes from is active (not muted / bypassed).
+function activeLink(node, name) {
+    const link = linkOf(node, node.inputs?.find((i) => i.name === name)?.link);
+    if (!link) return null;
+    const origin = node.graph?.getNodeById?.(link.origin_id);
+    return origin && (origin.mode ?? 0) === 0 ? link : null;
+}
+
+// {filename, subfolder, type} of the nearest media file in the nodes behind a
+// link, when it is a file ComfyUI's /view route can serve. null otherwise.
+function upstreamFile(node, start, pattern) {
+    try {
+        const queue = [start.origin_id];
+        const seen = new Set();
+        while (queue.length && seen.size < 100) {
+            const id = queue.shift();
+            if (seen.has(id)) continue;
+            seen.add(id);
+            const origin = node.graph?.getNodeById?.(id);
+            if (!origin) continue;
+            for (const w of origin.widgets ?? []) {
+                if (typeof w.value !== "string" || w.value.length > 1024 || /[\r\n]/.test(w.value)) continue;
+                let value = w.value.trim();
+                let type = "input";
+                const note = value.match(/\s*\[(input|output|temp)\]\s*$/);
+                if (note) {
+                    type = note[1];
+                    value = value.slice(0, note.index);
+                }
+                if (!pattern.test(value)) continue;
+                value = value.replace(/\\/g, "/");
+                if (value.startsWith("/") || /^[A-Za-z]:/.test(value) || value.split("/").includes("..")) return null;
+                const cut = value.lastIndexOf("/");
+                return { filename: value.slice(cut + 1), subfolder: cut >= 0 ? value.slice(0, cut) : "", type };
+            }
+            for (const input of origin.inputs ?? []) {
+                const link = linkOf(node, input.link);
+                if (link) queue.push(link.origin_id);
+            }
+        }
+    } catch {
+        // nothing usable behind the input
+    }
+    return null;
+}
+
+// The last run's size / first frame belong to another file than the one connected now.
+function runIsStale(node) {
+    const runKey = node.properties?.[RUN_KEY_PROP];
+    const wanted = node._mykeeMemeWantedKey;
+    if (typeof wanted !== "string") return false; // nothing looked at yet
+    // A run from before the file was recorded: unknown which picture it was, so a connected file wins.
+    if (typeof runKey !== "string") return wanted !== "";
+    return runKey !== wanted;
+}
+
+// Looks at what is connected and loads its file as the preview's background.
+function refreshMedia(node) {
+    if (!node._mykeeMemeReady) return;
+    const image = activeLink(node, "image");
+    const video = activeLink(node, "video");
+    const both = !!image && !!video;
+    const kind = both ? null : image ? "image" : video ? "video" : null;
+    const ref = kind ? upstreamFile(node, image || video, MEDIA_EXT[kind]) : null;
+    const key = both ? "both" : ref ? `${kind}|${ref.type}|${ref.subfolder}|${ref.filename}` : "";
+    if (key === node._mykeeMemeWantedKey) return;
+    node._mykeeMemeWantedKey = key;
+    node._mykeeMemeBoth = both;
+    node._mykeeMemeMedia = null;
+    node._mykeeMemeFieldsWin = false; // a new picture: its own size is the preview's again
+    const bgVideo = node._mykeeMemeVideo;
+    const finish = () => {
+        layoutStage(node);
+        schedulePreview(node, 50);
+    };
+    if (!ref) {
+        bgVideo?.removeAttribute("src");
+        bgVideo?.load();
+        finish();
+        return;
+    }
+    const query = new URLSearchParams({ filename: ref.filename, subfolder: ref.subfolder, type: ref.type });
+    const url = api.apiURL(`/view?${query.toString()}`);
+    const loaded = (width, height) => {
+        if (node._mykeeMemeWantedKey !== key || !(width >= 16) || !(height >= 16)) return;
+        node._mykeeMemeMedia = { kind, url, width, height };
+        finish();
+    };
+    if (kind === "image") {
+        bgVideo?.removeAttribute("src");
+        bgVideo?.load();
+        const probe = new Image();
+        probe.onload = () => loaded(probe.naturalWidth, probe.naturalHeight);
+        probe.onerror = finish; // a format the browser cannot show: the gray picture stays
+        probe.src = url;
+    } else if (bgVideo) {
+        bgVideo.onloadedmetadata = () => {
+            loaded(bgVideo.videoWidth, bgVideo.videoHeight);
+            try {
+                bgVideo.currentTime = 0.001; // makes the browser draw the first frame
+            } catch {
+                // the frame just stays empty
+            }
+        };
+        bgVideo.onerror = finish;
+        bgVideo.src = url;
+    }
+    finish();
+}
+
 // ---- preview ---------------------------------------------------------------
 
 // The picture shape the preview is drawn for:
@@ -264,8 +393,12 @@ function lastSize(node) {
     });
     const fields = w >= 16 && h >= 16 && w <= 65536 && h <= 65536 ? [w, h] : null;
     const s = node.properties?.[SIZE_PROP];
-    const run = Array.isArray(s) && s.length === 2 && s.every((v) => Number.isFinite(v) && v >= 16 && v <= 65536) ? s : null;
+    const valid = Array.isArray(s) && s.length === 2 && s.every((v) => Number.isFinite(v) && v >= 16 && v <= 65536);
+    const run = valid && !runIsStale(node) ? s : null;
     if (run && !node._mykeeMemeFieldsWin && !linkedAny) return run;
+    // not run yet with this picture: the connected file's own size
+    const media = node._mykeeMemeMedia;
+    if (media && !node._mykeeMemeFieldsWin && !linkedAny) return [media.width, media.height];
     return fields || run || DEFAULT_SIZE;
 }
 
@@ -327,9 +460,14 @@ function layoutStage(node) {
     pic.style.width = `${(shape.width / shape.totalW) * 100}%`;
     pic.style.top = `${(shape.top / shape.total) * 100}%`;
     pic.style.height = `${(shape.height / shape.total) * 100}%`;
-    const thumb = node._mykeeMemeThumb;
-    const sameShape = thumb && Math.abs(thumb.width / thumb.height - shape.width / shape.height) < 0.02;
-    pic.style.background = sameShape ? `url("${thumb.url}") 0 0 / 100% 100% no-repeat` : PREVIEW_GRAY;
+    // Under the caption: the first frame of the last run, else the connected file itself, else gray.
+    const fits = (m) => !!m && Math.abs(m.width / m.height - shape.width / shape.height) < 0.02;
+    const thumb = !runIsStale(node) && fits(node._mykeeMemeThumb) ? node._mykeeMemeThumb : null;
+    const media = !thumb && !node._mykeeMemeBoth && fits(node._mykeeMemeMedia) ? node._mykeeMemeMedia : null;
+    const bgVideo = node._mykeeMemeVideo;
+    if (bgVideo) bgVideo.style.display = media?.kind === "video" ? "block" : "none";
+    const still = thumb || (media?.kind === "image" ? media : null);
+    pic.style.background = still ? `url("${still.url}") 0 0 / 100% 100% no-repeat` : PREVIEW_GRAY;
 }
 
 function setStatus(node, text, isError) {
@@ -376,6 +514,7 @@ async function renderPreview(node) {
         if (changed) fitHeight(node);
         layoutStage(node);
         const warnings = [];
+        if (node._mykeeMemeBoth) warnings.push(BOTH_MESSAGE);
         if (data.fallback) warnings.push(`Font not found on this system - using '${data.font}'.`);
         if (data.missing) warnings.push(`'${data.font}' has no glyph for: ${data.missing}`);
         // a caption that had to be shrunk (to its line limit / the frame): say what it ended up at
@@ -396,6 +535,39 @@ function schedulePreview(node, delay = 250) {
     node._mykeeMemeTimer = setTimeout(() => renderPreview(node), delay);
 }
 
+
+// Widgets added after the first release. Workflows store widget values by
+// position, so in a workflow saved before they existed every value after
+// them would land one field too far. Such a workflow (no layout mark in its
+// properties) is read with the old order, and the new widgets keep their
+// default. Handles both ways frontends store the values (only the saved
+// widgets, or every widget by index).
+const LAYOUT_PROP = "mykee_meme_layout";
+const LAYOUT_VERSION = 2;
+const ADDED_WIDGETS = ["top_margin", "bottom_margin"];
+
+function migrateWidgetValues(node, info) {
+    const saved = info?.properties?.[LAYOUT_PROP];
+    node.properties = node.properties || {};
+    node.properties[LAYOUT_PROP] = LAYOUT_VERSION;
+    const values = info?.widgets_values;
+    if (saved === LAYOUT_VERSION || !Array.isArray(values) || !node.widgets) return;
+    const before = node.widgets.filter((w) => !ADDED_WIDGETS.includes(w.name));
+    const stored = before.filter((w) => w.serialize !== false);
+    const source = values.length <= stored.length ? stored : before; // compact list / one slot per widget
+    source.forEach((w, index) => {
+        const value = values[index];
+        if (w.serialize === false || value === undefined || value === null) return;
+        w.value = value;
+        const input = w.inputEl || w.element;
+        if (typeof value === "string" && input && "value" in input && input.tagName === "TEXTAREA") input.value = value;
+    });
+    for (const name of ADDED_WIDGETS) {
+        const w = node.widgets.find((x) => x.name === name);
+        if (w) w.value = 0;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Node
 // ---------------------------------------------------------------------------
@@ -410,6 +582,11 @@ function setupNode(node) {
     // first frame of the last run when there is one of the same shape.
     const pic = el("div");
     Object.assign(pic.style, { position: "absolute", left: "0", width: "100%", background: PREVIEW_GRAY });
+    // the first frame of a connected video file (shown until the node has run)
+    const bgVideo = el("video", { muted: true, preload: "auto", playsInline: true });
+    Object.assign(bgVideo.style, { position: "absolute", left: "0", top: "0", width: "100%", height: "100%", objectFit: "fill", display: "none" });
+    pic.append(bgVideo);
+    node._mykeeMemeVideo = bgVideo;
     const overlay = el("img", { alt: "preview", draggable: false });
     Object.assign(overlay.style, { position: "absolute", left: "0", top: "0", width: "100%", height: "100%" });
     const stage = el("div", {}, [pic, overlay]);
@@ -509,7 +686,7 @@ function setupNode(node) {
         if (COLOR_WIDGETS.includes(w.name)) order.push(`${w.name}_swatch`);
     }
     // the Text tab reads top caption settings first, then the bottom ones
-    const textGroup = ["top_font_size", "top_align", "top_lines", "bottom_font_size", "bottom_align", "bottom_lines"];
+    const textGroup = ["top_font_size", "top_align", "top_lines", "top_margin", "bottom_font_size", "bottom_align", "bottom_lines", "bottom_margin"];
     const rest = order.filter((n) => !textGroup.includes(n));
     rest.splice(rest.indexOf("meme_preview") + 1, 0, ...textGroup.filter((n) => byName.has(n)));
     order.splice(0, order.length, ...rest);
@@ -550,11 +727,21 @@ function setupNode(node) {
         schedulePreview(node, 50);
     };
     node.properties = node.properties || {};
+    node.properties[LAYOUT_PROP] = LAYOUT_VERSION;
     if (!TABS.some((t) => t.id === node.properties[TAB_PROP])) node.properties[TAB_PROP] = DEFAULT_TAB;
     node.setSize([Math.max(node.size[0], MIN_WIDTH), node.size[1]]);
     relayout(node);
     schedulePreview(node, 100);
-    setTimeout(() => relayout(node), 0);
+    setTimeout(() => {
+        relayout(node);
+        refreshMedia(node);
+    }, 0);
+    // Another file picked in the loader, or a node muted / bypassed, gives this node no
+    // event, so look regularly. A timer, not a draw hook: it must not depend on the canvas
+    // redrawing this node. refreshMedia does nothing when the connected file is the same.
+    node._mykeeMemePoll = setInterval(() => {
+        if (node.graph) refreshMedia(node);
+    }, 700);
 }
 
 app.registerExtension({
@@ -590,7 +777,11 @@ app.registerExtension({
         const onConfigure = nodeType.prototype.onConfigure;
         nodeType.prototype.onConfigure = function () {
             const r = onConfigure ? onConfigure.apply(this, arguments) : undefined;
-            const resync = () => this._mykeeMemeSync?.();
+            migrateWidgetValues(this, arguments[0]);
+            const resync = () => {
+                this._mykeeMemeSync?.();
+                refreshMedia(this);
+            };
             resync();
             setTimeout(resync, 0);
             setTimeout(resync, 200); // widget values from the workflow are in by now
@@ -600,7 +791,10 @@ app.registerExtension({
         const onConnectionsChange = nodeType.prototype.onConnectionsChange;
         nodeType.prototype.onConnectionsChange = function () {
             const r = onConnectionsChange ? onConnectionsChange.apply(this, arguments) : undefined;
-            if (this._mykeeMemeReady) schedulePreview(this);
+            if (this._mykeeMemeReady) {
+                schedulePreview(this);
+                if (!app.configuringGraph) setTimeout(() => refreshMedia(this), 0);
+            }
             return r;
         };
 
@@ -611,6 +805,7 @@ app.registerExtension({
             if (info && Number.isFinite(info.width) && Number.isFinite(info.height)) {
                 this.properties = this.properties || {};
                 this.properties[SIZE_PROP] = [info.width, info.height];
+                this.properties[RUN_KEY_PROP] = this._mykeeMemeWantedKey ?? "";
                 this._mykeeMemeFieldsWin = false; // the real picture is known again
                 // the first input frame (a small JPEG the node sends back) becomes the preview's background
                 const ok = typeof info.thumb === "string" && /^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(info.thumb);
@@ -637,6 +832,7 @@ app.registerExtension({
         const onRemoved = nodeType.prototype.onRemoved;
         nodeType.prototype.onRemoved = function () {
             clearTimeout(this._mykeeMemeTimer);
+            clearInterval(this._mykeeMemePoll);
             this._mykeeMemeToken = -1;
             return onRemoved ? onRemoved.apply(this, arguments) : undefined;
         };

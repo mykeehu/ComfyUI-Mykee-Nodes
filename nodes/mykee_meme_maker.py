@@ -14,6 +14,10 @@ any resolution:
   padding        % of the image width
   frame_height   % of the image width (fixed frame mode)
   frame_width    % of the image width: a border all around the picture (frame mode, 0 = none)
+  top_margin     % of the image HEIGHT: extra distance of the top caption from the top edge
+  bottom_margin  % of the image HEIGHT: extra distance of the bottom caption from the bottom edge
+                 (a vertical distance, so 0 - 100 spans the whole picture; in frame
+                 placement it is empty room at the outer edge of the band)
 
 Wrapping
 --------
@@ -120,6 +124,7 @@ DEFAULTS = {
     "placement": "on image", "frame_color": "#FFFFFF", "frame_width": 0.0, "frame_width_mode": "around image",
     "frame_height_mode": "fit text", "frame_height": 15.0,
     "top_align": "center", "top_lines": 0, "bottom_align": "center", "bottom_lines": 0,
+    "top_margin": 0.0, "bottom_margin": 0.0,
 }
 
 
@@ -187,6 +192,8 @@ def clean_params(raw):
         "top_lines": _number("top_lines", raw["top_lines"], 0, MAX_LINES, integer=True),
         "bottom_align": _choice("bottom_align", raw["bottom_align"], ALIGNS),
         "bottom_lines": _number("bottom_lines", raw["bottom_lines"], 0, MAX_LINES, integer=True),
+        "top_margin": _number("top_margin", raw["top_margin"], 0.0, 100.0),
+        "bottom_margin": _number("bottom_margin", raw["bottom_margin"], 0.0, 100.0),
     }
 
 
@@ -523,10 +530,14 @@ def build_layout(width, height, params):
         outer = width + 2 * b_img  # the text wraps to the (bordered) picture
         fixed = frame and params["frame_height_mode"] == "fixed"
         band_fixed = int(round(params["frame_height"] / 100.0 * width)) if fixed else None
-        max_h = max(MIN_PX, band_fixed - 2 * pad) if fixed else None
+        # extra distance from the top / bottom edge (in a frame: empty room at the band's outer edge)
+        m_top = int(round(params["top_margin"] / 100.0 * height))
+        m_bottom = int(round(params["bottom_margin"] / 100.0 * height))
+        max_h_top = max(MIN_PX, band_fixed - 2 * pad - m_top) if fixed else None
+        max_h_bottom = max(MIN_PX, band_fixed - 2 * pad - m_bottom) if fixed else None
 
-        top = layout_block(top_text, params, ref, outer, pad, params["top_lines"], max_h, params["top_font_size"], width)
-        bottom = layout_block(bottom_text, params, ref, outer, pad, params["bottom_lines"], max_h, params["bottom_font_size"], width)
+        top = layout_block(top_text, params, ref, outer, pad, params["top_lines"], max_h_top, params["top_font_size"], width)
+        bottom = layout_block(bottom_text, params, ref, outer, pad, params["bottom_lines"], max_h_bottom, params["bottom_font_size"], width)
         missing = sorted(set(missing_chars(ref, top_text + bottom_text)))
         if top is None and bottom is None and not border:
             empty = Image.new("RGBA", (width, height), (0, 0, 0, 0))
@@ -535,9 +546,9 @@ def build_layout(width, height, params):
         top_band = bottom_band = bottom_pad = 0
         if frame:
             if top is not None:
-                top_band = band_fixed if fixed else top.height + 2 * pad
+                top_band = band_fixed if fixed else top.height + 2 * pad + m_top
             if bottom is not None:
-                bottom_band = band_fixed if fixed else bottom.height + 2 * pad
+                bottom_band = band_fixed if fixed else bottom.height + 2 * pad + m_bottom
             if (height + 2 * border + top_band + bottom_band) % 2:  # video encoders want an even height
                 if bottom_band:
                     bottom_band += 1
@@ -564,13 +575,14 @@ def build_layout(width, height, params):
             overlay = Image.alpha_composite(overlay, tmp)
 
         if top is not None:
-            y = b_out + ((top_band - top.height) / 2.0 if fixed else pad)
+            y = b_out + m_top + (max(0.0, (top_band - m_top - top.height) / 2.0) if fixed else pad)
             place(top, params["top_align"], y)
         if bottom is not None:
             if frame:
-                y = total - bottom_pad - b_out - bottom_band + ((bottom_band - bottom.height) / 2.0 if fixed else pad)
+                # the margin is at the outer (lower) edge of the band, the text sits in the rest
+                y = total - bottom_pad - b_out - bottom_band + (max(0.0, (bottom_band - m_bottom - bottom.height) / 2.0) if fixed else pad)
             else:
-                y = total - pad - bottom.height
+                y = total - pad - bottom.height - m_bottom
             place(bottom, params["bottom_align"], y)
         sizes = tuple(None if b is None else round(b.px / width * 100.0, 1) for b in (top, bottom))
         return Layout(overlay, top_band, total, missing, ref.name, ref.fallback, True, sizes, total_w, img_x, img_y)
@@ -694,6 +706,9 @@ class MykeeMemeMaker:
             "optional": {
                 "image": ("IMAGE", {"tooltip": "An image or an image batch."}),
                 "video": ("VIDEO", {"tooltip": "A video (instead of image). The video output keeps its audio and frame rate."}),
+                # optional (not required), so API workflows saved before these existed still validate
+                "top_margin": ("FLOAT", {"default": d["top_margin"], "min": 0.0, "max": 100.0, "step": 0.5, "tooltip": "Extra distance of the top caption from the top edge, in % of the image height (0 = right at the padding). In frame placement: empty room at the top of the band."}),
+                "bottom_margin": ("FLOAT", {"default": d["bottom_margin"], "min": 0.0, "max": 100.0, "step": 0.5, "tooltip": "Extra distance of the bottom caption from the bottom edge, in % of the image height (0 = right at the padding). In frame placement: empty room at the bottom of the band."}),
             },
         }
 
@@ -711,7 +726,7 @@ class MykeeMemeMaker:
             stroke_width, line_height, padding, placement, frame_color, frame_width, frame_width_mode, frame_height_mode, frame_height,
             top_align, top_lines, bottom_align, bottom_lines,
             preview_width=1024, preview_height=1024,
-            image=None, video=None):  # preview_width / preview_height only steer the preview on the node
+            image=None, video=None, top_margin=0.0, bottom_margin=0.0):  # preview_width / preview_height only steer the preview on the node
         if image is not None and video is not None:
             raise ValueError("[Mykee Meme Maker] Connect either an image or a video, not both.")
         if image is None and video is None:
@@ -723,6 +738,7 @@ class MykeeMemeMaker:
             "padding": padding, "placement": placement, "frame_color": frame_color, "frame_width": frame_width, "frame_width_mode": frame_width_mode,
             "frame_height_mode": frame_height_mode, "frame_height": frame_height,
             "top_align": top_align, "top_lines": top_lines, "bottom_align": bottom_align, "bottom_lines": bottom_lines,
+            "top_margin": top_margin, "bottom_margin": bottom_margin,
         })
         components = None
         if video is not None:

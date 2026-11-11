@@ -18,6 +18,7 @@ _NODE_MODULES = [
     "mykee_stylegan",
     "mykee_image",
     "mykee_meme_maker",
+    "mykee_video_titler",
     "mykee_stripe_remover",
     "mykee_latent_nyquist_notch",
     "mykee_latent_tone_notch",
