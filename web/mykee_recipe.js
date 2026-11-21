@@ -13,7 +13,9 @@
  * Four tabs (same tab bar as the Text Analyzer):
  *
  *   Parameters  the connected parameters with their keys and value editors,
- *               a recipe picker (loads the picked recipe into the parameters),
+ *               a recipe picker (loads the picked recipe into the parameters,
+ *               and follows every edit: it shows the recipe that already holds
+ *               the current values, or the empty entry when there is none),
  *               the recipe name and "Send to Recipe".
  *   Recipe      the current recipe as editable JSON text, a pager over all the
  *               recipes in the node, "Load Recipe" (recipe -> parameters).
@@ -640,6 +642,49 @@ function connectedSlots(node) {
         slots.push({ s, key: paramKey(node, s, target), target, current });
     }
     return slots;
+}
+
+// Two parameter values are the same setting (floats: ignoring rounding noise).
+function sameValue(a, b) {
+    if (typeof a === "number" && typeof b === "number") {
+        return a === b || Math.abs(a - b) <= 1e-9 * Math.max(1, Math.abs(a), Math.abs(b));
+    }
+    return typeof a === typeof b && a === b;
+}
+
+// Pure core of the recipe picker's "is this setting already a recipe?" check.
+// slots = [{s, key, target, current}] (the connected outputs and the values now
+// on the node). A recipe matches when loading it would leave every connected
+// parameter exactly as it is: each of its entries that lands on a connected
+// output is valid there and equals the current value, and at least one does.
+// Entries for outputs that aren't connected are ignored, like on Load Recipe.
+// Of several matches the one covering the most parameters wins, then the one
+// named `preferName` (what recipe_name shows), then the first in the list.
+// Returns the recipe's name, or "" when nothing matches.
+function findMatchingRecipe(slots, recipes, preferName = "") {
+    if (!slots.length) return "";
+    const current = new Map(slots.map((slot) => [slot.s, slot.current]));
+    const prefer = String(preferName || "").trim().toLowerCase();
+    let best = null;
+    for (const recipe of recipes) {
+        const { results } = planApply(slots, recipe);
+        let covered = 0;
+        let same = true;
+        for (const r of results) {
+            if (r.status === "unchanged") continue;
+            if (r.status !== "applied" || !sameValue(r.value, current.get(r.s))) {
+                same = false;
+                break;
+            }
+            covered++;
+        }
+        if (!same || !covered) continue;
+        const preferred = prefer !== "" && recipe.name.toLowerCase() === prefer;
+        if (!best || covered > best.covered || (covered === best.covered && preferred && !best.preferred)) {
+            best = { name: recipe.name, covered, preferred };
+        }
+    }
+    return best ? best.name : "";
 }
 
 // ---------------------------------------------------------------------------
@@ -1367,15 +1412,22 @@ function setupNode(node) {
         node._mykeeRcRefreshAll?.();
     }, { values: [""], serialize: false });
     pickerW.serialize = false;
-    pickerW.tooltip = "Pick a recipe to load it into the parameters (same as 'Load Recipe').";
+    pickerW.tooltip = "Pick a recipe to load it into the parameters (same as 'Load Recipe'). "
+        + "It always shows the recipe that holds the current parameter values - empty when no recipe has them yet.";
 
-    // The list follows the recipes on the node; it shows the recipe whose name is in recipe_name.
+    // The list follows the recipes on the node; it shows the recipe that
+    // already holds the values now set on the Parameters tab (so the same
+    // setting isn't stored twice), or the empty entry when there is none.
     const syncRecipePicker = () => {
-        const names = S(node).recipes.map((r) => r.name);
-        pickerW.options.values = ["", ...names];
-        const current = String(nameW.value || "").trim().toLowerCase();
-        pickerW.value = names.find((n) => n.toLowerCase() === current) ?? "";
-        node.setDirtyCanvas?.(true, true);
+        const recipes = S(node).recipes;
+        const values = ["", ...recipes.map((r) => r.name)];
+        const match = findMatchingRecipe(connectedSlots(node), recipes, nameW.value);
+        const changed = pickerW.value !== match
+            || pickerW.options.values.length !== values.length
+            || pickerW.options.values.some((v, i) => v !== values[i]);
+        pickerW.options.values = values;
+        pickerW.value = match;
+        if (changed) node.setDirtyCanvas?.(true, true);
     };
     node._mykeeRcSyncPicker = syncRecipePicker;
     const origNameCallback = nameW.callback;
@@ -1411,11 +1463,16 @@ function setupNode(node) {
     node._mykeeRcRenderParams = () => {
         paramsHeight = estimateParamsHeight(node);
         params.replaceChildren();
-        const onChange = () => persist(node);
+        // Every edit (value or key) re-checks which recipe holds this setting.
+        const onChange = () => {
+            persist(node);
+            syncRecipePicker();
+        };
         observer?.disconnect();
         for (let s = 0; s < slotCount(node); s++) params.append(renderSlot(node, s, onChange));
         for (const box of params.children) observer?.observe(box);
         persist(node);
+        syncRecipePicker(); // connections / lists / loaded values may have changed
         if (currentTab(node) === "params") fitHeight(node, true);
         requestAnimationFrame(() => measure());
     };
@@ -1972,4 +2029,4 @@ app.registerExtension({
 });
 
 // Exposed for the unit tests only (nothing in ComfyUI reads this).
-export const __testing = { planBatch, valueText, batchFromPrompt, buildBatchOutput, migrateOutputs, cleanDoc, cleanRecipe, cleanParam, cleanValue, matchOption, coerceValue, planApply, defaultValue, parseState, stepFor };
+export const __testing = { planBatch, valueText, batchFromPrompt, buildBatchOutput, migrateOutputs, cleanDoc, cleanRecipe, cleanParam, cleanValue, matchOption, sameValue, findMatchingRecipe, coerceValue, planApply, defaultValue, parseState, stepFor };

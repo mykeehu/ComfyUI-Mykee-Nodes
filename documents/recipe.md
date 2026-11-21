@@ -37,8 +37,13 @@ value editor (number, text box, checkbox or the widget's own list). Below:
 - **recipe_picker** (above `recipe_name`) lists the recipes on the node. Picking
   one loads it into the parameters and fills in `recipe_name` (same as Load
   Recipe, no need to switch tabs). To make a new recipe from an existing one:
-  pick it, change a value, type a new `recipe_name`, press Send to Recipe. The
-  picker shows the recipe whose name is in `recipe_name`.
+  pick it, change a value, type a new `recipe_name`, press Send to Recipe.
+- The picker follows the parameters: whenever a value changes, it jumps to the
+  recipe that already holds exactly these values, or to the empty entry when
+  no recipe does - so you can see at a glance whether a setting is already
+  stored and avoid saving it twice. Only the connected parameters are compared
+  (entries a recipe has for other keys are ignored, as on Load Recipe). If
+  several recipes hold the same values, the one named in `recipe_name` is shown.
 - A recipe with that name already exists: its entries are **updated** (other
   entries of that recipe are kept). Otherwise a new recipe is added.
 - Two outputs with the same key can't be sent (rename one - the field turns red).
