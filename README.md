@@ -104,6 +104,8 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Size Switch/Batch](documents/size-switch-batch.md) | Up to 32 width/height pairs with switch or batch output. |
 | [Mykee Width/Height Resizer](documents/width-height-resizer.md) | Scales a width/height pair by a factor or to a target size, with 8/16/32/64 rounding. |
 | [Mykee Switch Conditioning](documents/switch-conditioning.md) | Forgiving conditioning switch (rework of Crystools' node). |
+| [Mykee - KSampler with Sigmas](documents/ksampler-with-sigmas.md) | The core KSampler with a switchable sigmas input (connected or typed) instead of steps / scheduler / denoise. |
+| [Mykee - Sigmas Editor](documents/sigmas-editor.md) | Graphical sigma schedule editor: drag or type the points, generate flow shift / Karras / exponential curves, load a scheduler's sigmas. |
 | [Mykee Stripe Remover](documents/stripe-remover.md) | Removes faint periodic stripes from images (DiT banding). |
 | [Mykee Latent Nyquist Notch](documents/latent-nyquist-notch.md) | Removes the 2-latent-pixel pattern from a LATENT before VAE decode. |
 | [Mykee Latent Tone Notch](documents/latent-tone-notch.md) | Removes a fixed-frequency stripe pattern of any period from a LATENT. |

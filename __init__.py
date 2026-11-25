@@ -29,6 +29,8 @@ _NODE_MODULES = [
     "mykee_json_captioner",
     "mykee_json_bbox_resizer",
     "mykee_conditioning",
+    "mykee_ksampler_sigmas",
+    "mykee_sigmas_editor",
     "mykee_seed",
     "mykee_xyz_plot",
     "mykee_model_template",
