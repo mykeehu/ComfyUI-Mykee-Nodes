@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Lens",
+  "type": "single",
+  "max": 0,
+  "order": 82,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "d5202176",
+      "prompt": "35mm lens",
+      "label": "35mm lens"
+    },
+    {
+      "id": "a9d148af",
+      "prompt": "50mm lens",
+      "label": "50mm lens"
+    },
+    {
+      "id": "5232db4c",
+      "prompt": "85mm portrait lens",
+      "label": "85mm portrait lens"
+    },
+    {
+      "id": "64e935de",
+      "prompt": "wide-angle lens",
+      "label": "wide-angle lens"
+    },
+    {
+      "id": "e06a930a",
+      "prompt": "telephoto lens",
+      "label": "telephoto lens"
+    },
+    {
+      "id": "49e9e151",
+      "prompt": "macro lens",
+      "label": "macro lens"
+    }
+  ]
+}

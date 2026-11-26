@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Color grading",
+  "type": "single",
+  "max": 0,
+  "order": 92,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "7b851135",
+      "prompt": "natural colors",
+      "label": "natural colors"
+    },
+    {
+      "id": "b2ada1a7",
+      "prompt": "warm color grading",
+      "label": "warm color grading"
+    },
+    {
+      "id": "5d662350",
+      "prompt": "cool color grading",
+      "label": "cool color grading"
+    },
+    {
+      "id": "295ccb23",
+      "prompt": "muted pastel tones",
+      "label": "muted pastel tones"
+    },
+    {
+      "id": "aa84ab0b",
+      "prompt": "high contrast",
+      "label": "high contrast"
+    },
+    {
+      "id": "833d2c48",
+      "prompt": "black and white",
+      "label": "black and white"
+    },
+    {
+      "id": "d24b0458",
+      "prompt": "teal and orange grading",
+      "label": "teal and orange grading"
+    },
+    {
+      "id": "dc45d0fa",
+      "prompt": "vintage faded colors",
+      "label": "vintage faded colors"
+    }
+  ]
+}

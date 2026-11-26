@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "label": "Hair color",
+  "type": "single",
+  "max": 0,
+  "order": 30,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "bdfa30e3",
+      "prompt": "black hair",
+      "label": "black hair"
+    },
+    {
+      "id": "51c1e86f",
+      "prompt": "dark brown hair",
+      "label": "dark brown hair"
+    },
+    {
+      "id": "1bce7acb",
+      "prompt": "light brown hair",
+      "label": "light brown hair"
+    },
+    {
+      "id": "472f79cf",
+      "prompt": "auburn hair",
+      "label": "auburn hair"
+    },
+    {
+      "id": "b4961f20",
+      "prompt": "red hair",
+      "label": "red hair"
+    },
+    {
+      "id": "221b5be6",
+      "prompt": "copper hair",
+      "label": "copper hair"
+    },
+    {
+      "id": "8bff5226",
+      "prompt": "blonde hair",
+      "label": "blonde hair"
+    },
+    {
+      "id": "ed047889",
+      "prompt": "platinum blonde hair",
+      "label": "platinum blonde hair"
+    },
+    {
+      "id": "03e68382",
+      "prompt": "silver hair",
+      "label": "silver hair"
+    },
+    {
+      "id": "478fb73c",
+      "prompt": "grey hair",
+      "label": "grey hair"
+    }
+  ]
+}

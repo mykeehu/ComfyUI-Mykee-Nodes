@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "label": "Eye color",
+  "type": "single",
+  "max": 0,
+  "order": 20,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "6cdbc229",
+      "prompt": "blue eyes",
+      "label": "blue eyes"
+    },
+    {
+      "id": "8c8d4594",
+      "prompt": "green eyes",
+      "label": "green eyes"
+    },
+    {
+      "id": "ffe84571",
+      "prompt": "hazel eyes",
+      "label": "hazel eyes"
+    },
+    {
+      "id": "843dfdac",
+      "prompt": "brown eyes",
+      "label": "brown eyes"
+    },
+    {
+      "id": "be7f1485",
+      "prompt": "dark brown eyes",
+      "label": "dark brown eyes"
+    },
+    {
+      "id": "84fc2fe7",
+      "prompt": "grey eyes",
+      "label": "grey eyes"
+    },
+    {
+      "id": "0a798d6a",
+      "prompt": "amber eyes",
+      "label": "amber eyes"
+    },
+    {
+      "id": "832dff22",
+      "prompt": "pale icy blue eyes",
+      "label": "pale icy blue eyes"
+    },
+    {
+      "id": "b82df7f9",
+      "prompt": "heterochromia",
+      "label": "heterochromia"
+    }
+  ]
+}

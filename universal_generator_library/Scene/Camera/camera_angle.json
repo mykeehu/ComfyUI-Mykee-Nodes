@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "label": "Camera angle",
+  "type": "single",
+  "max": 0,
+  "order": 81,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "860f46dd",
+      "prompt": "eye-level angle",
+      "label": "eye-level angle"
+    },
+    {
+      "id": "6e21a95a",
+      "prompt": "low angle",
+      "label": "low angle"
+    },
+    {
+      "id": "7dc2209e",
+      "prompt": "high angle",
+      "label": "high angle"
+    },
+    {
+      "id": "8a196c2c",
+      "prompt": "overhead view",
+      "label": "overhead view"
+    },
+    {
+      "id": "c7c09c44",
+      "prompt": "dutch angle",
+      "label": "dutch angle"
+    },
+    {
+      "id": "e9bdc9b3",
+      "prompt": "over-the-shoulder view",
+      "label": "over-the-shoulder view"
+    },
+    {
+      "id": "3d26ecbf",
+      "prompt": "profile view",
+      "label": "profile view"
+    }
+  ]
+}

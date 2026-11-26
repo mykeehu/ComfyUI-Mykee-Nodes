@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Face shape",
+  "type": "single",
+  "max": 0,
+  "order": 22,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "b5c4d3e5",
+      "prompt": "oval face",
+      "label": "oval face"
+    },
+    {
+      "id": "f50329c6",
+      "prompt": "round face",
+      "label": "round face"
+    },
+    {
+      "id": "4416acb1",
+      "prompt": "heart-shaped face",
+      "label": "heart-shaped face"
+    },
+    {
+      "id": "b5a20fe1",
+      "prompt": "square face",
+      "label": "square face"
+    },
+    {
+      "id": "2d137518",
+      "prompt": "diamond face",
+      "label": "diamond face"
+    },
+    {
+      "id": "5da9593e",
+      "prompt": "long face",
+      "label": "long face"
+    }
+  ]
+}

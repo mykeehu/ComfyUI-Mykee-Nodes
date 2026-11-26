@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Time of day",
+  "type": "single",
+  "max": 0,
+  "order": 71,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "5e313d10",
+      "prompt": "early morning",
+      "label": "early morning"
+    },
+    {
+      "id": "203f01c5",
+      "prompt": "midday",
+      "label": "midday"
+    },
+    {
+      "id": "4cbe3dd4",
+      "prompt": "late afternoon",
+      "label": "late afternoon"
+    },
+    {
+      "id": "34c5bfb4",
+      "prompt": "sunset",
+      "label": "sunset"
+    },
+    {
+      "id": "5997db38",
+      "prompt": "blue hour",
+      "label": "blue hour"
+    },
+    {
+      "id": "583599e9",
+      "prompt": "night",
+      "label": "night"
+    }
+  ]
+}

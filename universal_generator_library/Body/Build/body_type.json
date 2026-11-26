@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Body type",
+  "type": "single",
+  "max": 0,
+  "order": 5,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "e95e1582",
+      "prompt": "slim build",
+      "label": "slim build"
+    },
+    {
+      "id": "1b6ae3e1",
+      "prompt": "athletic build",
+      "label": "athletic build"
+    },
+    {
+      "id": "9ecbf114",
+      "prompt": "muscular build",
+      "label": "muscular build"
+    },
+    {
+      "id": "3f172127",
+      "prompt": "average build",
+      "label": "average build"
+    },
+    {
+      "id": "f67e4b81",
+      "prompt": "curvy build",
+      "label": "curvy build"
+    },
+    {
+      "id": "86bf245e",
+      "prompt": "stocky build",
+      "label": "stocky build"
+    },
+    {
+      "id": "5dd1281c",
+      "prompt": "petite build",
+      "label": "petite build"
+    },
+    {
+      "id": "6df65b3d",
+      "prompt": "tall and lanky build",
+      "label": "tall and lanky build"
+    }
+  ]
+}

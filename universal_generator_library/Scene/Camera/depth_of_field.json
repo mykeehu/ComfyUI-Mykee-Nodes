@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "label": "Depth of field",
+  "type": "single",
+  "max": 0,
+  "order": 83,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "87bee9d0",
+      "prompt": "shallow depth of field with creamy bokeh",
+      "label": "shallow depth of field with creamy bokeh"
+    },
+    {
+      "id": "ed22ea30",
+      "prompt": "deep focus, everything sharp",
+      "label": "deep focus, everything sharp"
+    },
+    {
+      "id": "9c48192a",
+      "prompt": "soft background blur",
+      "label": "soft background blur"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Pose",
+  "type": "single",
+  "max": 0,
+  "order": 2,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "b01afbb2",
+      "prompt": "standing",
+      "label": "standing"
+    },
+    {
+      "id": "fe60e4d4",
+      "prompt": "sitting",
+      "label": "sitting"
+    },
+    {
+      "id": "206a0e94",
+      "prompt": "walking",
+      "label": "walking"
+    },
+    {
+      "id": "440755ed",
+      "prompt": "leaning against a wall",
+      "label": "leaning against a wall"
+    },
+    {
+      "id": "d95a4f0f",
+      "prompt": "lying down",
+      "label": "lying down"
+    },
+    {
+      "id": "2dc65b3e",
+      "prompt": "kneeling",
+      "label": "kneeling"
+    },
+    {
+      "id": "38860cb4",
+      "prompt": "crouching",
+      "label": "crouching"
+    },
+    {
+      "id": "586671a8",
+      "prompt": "running",
+      "label": "running"
+    }
+  ]
+}

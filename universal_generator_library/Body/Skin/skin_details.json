@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Skin details",
+  "type": "multi",
+  "max": 3,
+  "order": 11,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "129f2b60",
+      "prompt": "freckles",
+      "label": "freckles"
+    },
+    {
+      "id": "ffdcc2a8",
+      "prompt": "light freckles across the nose",
+      "label": "light freckles across the nose"
+    },
+    {
+      "id": "1122ae25",
+      "prompt": "beauty mark",
+      "label": "beauty mark"
+    },
+    {
+      "id": "c0ea10f3",
+      "prompt": "natural skin texture",
+      "label": "natural skin texture"
+    },
+    {
+      "id": "3db6b8ab",
+      "prompt": "visible pores",
+      "label": "visible pores"
+    },
+    {
+      "id": "6e50ed91",
+      "prompt": "sun-kissed skin",
+      "label": "sun-kissed skin"
+    },
+    {
+      "id": "e475c6a6",
+      "prompt": "smooth skin",
+      "label": "smooth skin"
+    },
+    {
+      "id": "611606f7",
+      "prompt": "light blush",
+      "label": "light blush"
+    }
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Position",
+  "type": "multi",
+  "max": 2,
+  "order": 1,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "d179f556",
+      "prompt": "in the foreground",
+      "label": "in the foreground"
+    },
+    {
+      "id": "9f88e9b5",
+      "prompt": "in the background",
+      "label": "in the background"
+    },
+    {
+      "id": "99a0b19b",
+      "prompt": "in the middle ground",
+      "label": "in the middle ground"
+    },
+    {
+      "id": "baa3604a",
+      "prompt": "on the left side of the frame",
+      "label": "on the left side of the frame"
+    },
+    {
+      "id": "589f44ee",
+      "prompt": "on the right side of the frame",
+      "label": "on the right side of the frame"
+    },
+    {
+      "id": "47180ef1",
+      "prompt": "in the center of the frame",
+      "label": "in the center of the frame"
+    },
+    {
+      "id": "812e733a",
+      "prompt": "seen through a window",
+      "label": "seen through a window"
+    },
+    {
+      "id": "cad6ed33",
+      "prompt": "partly hidden behind an object",
+      "label": "partly hidden behind an object"
+    }
+  ]
+}

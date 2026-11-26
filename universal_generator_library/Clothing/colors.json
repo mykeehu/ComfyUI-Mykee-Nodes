@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Clothing colors",
+  "type": "multi",
+  "max": 2,
+  "order": 41,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "07c2272e",
+      "prompt": "black clothing",
+      "label": "black clothing"
+    },
+    {
+      "id": "f4de0468",
+      "prompt": "white clothing",
+      "label": "white clothing"
+    },
+    {
+      "id": "c8d36b10",
+      "prompt": "red clothing",
+      "label": "red clothing"
+    },
+    {
+      "id": "77cf1d41",
+      "prompt": "navy blue clothing",
+      "label": "navy blue clothing"
+    },
+    {
+      "id": "2cd18b20",
+      "prompt": "emerald green clothing",
+      "label": "emerald green clothing"
+    },
+    {
+      "id": "fcee5733",
+      "prompt": "pastel colored clothing",
+      "label": "pastel colored clothing"
+    },
+    {
+      "id": "dc04aec6",
+      "prompt": "earth-toned clothing",
+      "label": "earth-toned clothing"
+    },
+    {
+      "id": "5a815a2a",
+      "prompt": "monochrome outfit",
+      "label": "monochrome outfit"
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "label": "Outfit style",
+  "type": "single",
+  "max": 0,
+  "order": 40,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "4c76322e",
+      "prompt": "casual outfit",
+      "label": "casual outfit"
+    },
+    {
+      "id": "e5f4fd6c",
+      "prompt": "business attire",
+      "label": "business attire"
+    },
+    {
+      "id": "e2f7c1d7",
+      "prompt": "streetwear",
+      "label": "streetwear"
+    },
+    {
+      "id": "b5524c73",
+      "prompt": "evening gown",
+      "label": "evening gown"
+    },
+    {
+      "id": "dbe0b522",
+      "prompt": "summer dress",
+      "label": "summer dress"
+    },
+    {
+      "id": "88511b09",
+      "prompt": "sportswear",
+      "label": "sportswear"
+    },
+    {
+      "id": "8dec3b04",
+      "prompt": "bohemian outfit",
+      "label": "bohemian outfit"
+    },
+    {
+      "id": "9afbbbdf",
+      "prompt": "vintage 1950s outfit",
+      "label": "vintage 1950s outfit"
+    },
+    {
+      "id": "0950b99f",
+      "prompt": "gothic outfit",
+      "label": "gothic outfit"
+    },
+    {
+      "id": "c65c2fbb",
+      "prompt": "traditional folk costume",
+      "label": "traditional folk costume"
+    }
+  ]
+}

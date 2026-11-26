@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "label": "Light type",
+  "type": "single",
+  "max": 0,
+  "order": 70,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "c56cc7de",
+      "prompt": "soft natural window light",
+      "label": "soft natural window light"
+    },
+    {
+      "id": "0ac1c11e",
+      "prompt": "golden hour backlight",
+      "label": "golden hour backlight"
+    },
+    {
+      "id": "9821a7e0",
+      "prompt": "harsh midday sun",
+      "label": "harsh midday sun"
+    },
+    {
+      "id": "22fa6b6e",
+      "prompt": "overcast diffused light",
+      "label": "overcast diffused light"
+    },
+    {
+      "id": "3446f153",
+      "prompt": "studio softbox lighting",
+      "label": "studio softbox lighting"
+    },
+    {
+      "id": "6a32b931",
+      "prompt": "rim lighting",
+      "label": "rim lighting"
+    },
+    {
+      "id": "22541cba",
+      "prompt": "neon lighting",
+      "label": "neon lighting"
+    },
+    {
+      "id": "41665116",
+      "prompt": "candlelight",
+      "label": "candlelight"
+    },
+    {
+      "id": "c4d21970",
+      "prompt": "moonlight",
+      "label": "moonlight"
+    },
+    {
+      "id": "38812af8",
+      "prompt": "dramatic chiaroscuro lighting",
+      "label": "dramatic chiaroscuro lighting"
+    }
+  ]
+}

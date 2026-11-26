@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Accessories",
+  "type": "multi",
+  "max": 3,
+  "order": 42,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "f23556fc",
+      "prompt": "silver earrings",
+      "label": "silver earrings"
+    },
+    {
+      "id": "b9163f4d",
+      "prompt": "gold necklace",
+      "label": "gold necklace"
+    },
+    {
+      "id": "f6a1b8ff",
+      "prompt": "wristwatch",
+      "label": "wristwatch"
+    },
+    {
+      "id": "2af3a2e2",
+      "prompt": "sunglasses",
+      "label": "sunglasses"
+    },
+    {
+      "id": "8c1dae34",
+      "prompt": "wide-brimmed hat",
+      "label": "wide-brimmed hat"
+    },
+    {
+      "id": "2bd7fe55",
+      "prompt": "scarf",
+      "label": "scarf"
+    },
+    {
+      "id": "b5f527c2",
+      "prompt": "leather handbag",
+      "label": "leather handbag"
+    },
+    {
+      "id": "1dc085aa",
+      "prompt": "glasses",
+      "label": "glasses"
+    }
+  ]
+}

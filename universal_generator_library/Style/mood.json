@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Mood",
+  "type": "multi",
+  "max": 2,
+  "order": 91,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "9054ce0d",
+      "prompt": "warm and cozy",
+      "label": "warm and cozy"
+    },
+    {
+      "id": "d8716dbd",
+      "prompt": "calm and serene",
+      "label": "calm and serene"
+    },
+    {
+      "id": "41c9896d",
+      "prompt": "moody and dark",
+      "label": "moody and dark"
+    },
+    {
+      "id": "9fc55767",
+      "prompt": "romantic",
+      "label": "romantic"
+    },
+    {
+      "id": "34d1ed12",
+      "prompt": "energetic",
+      "label": "energetic"
+    },
+    {
+      "id": "c2bc1ab5",
+      "prompt": "melancholic",
+      "label": "melancholic"
+    },
+    {
+      "id": "79e2f141",
+      "prompt": "mysterious",
+      "label": "mysterious"
+    },
+    {
+      "id": "b78da166",
+      "prompt": "dreamy",
+      "label": "dreamy"
+    }
+  ]
+}

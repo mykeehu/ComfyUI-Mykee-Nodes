@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Expression",
+  "type": "single",
+  "max": 0,
+  "order": 24,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "e89e9209",
+      "prompt": "soft smile",
+      "label": "soft smile"
+    },
+    {
+      "id": "0970acf3",
+      "prompt": "wide smile",
+      "label": "wide smile"
+    },
+    {
+      "id": "e99bf506",
+      "prompt": "neutral expression",
+      "label": "neutral expression"
+    },
+    {
+      "id": "804e0daa",
+      "prompt": "serious expression",
+      "label": "serious expression"
+    },
+    {
+      "id": "b8c60474",
+      "prompt": "playful smirk",
+      "label": "playful smirk"
+    },
+    {
+      "id": "8955347c",
+      "prompt": "laughing",
+      "label": "laughing"
+    },
+    {
+      "id": "c56a3a18",
+      "prompt": "pensive look",
+      "label": "pensive look"
+    },
+    {
+      "id": "0c54a57f",
+      "prompt": "surprised expression",
+      "label": "surprised expression"
+    }
+  ]
+}

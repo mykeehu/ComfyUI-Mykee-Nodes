@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Hair length",
+  "type": "single",
+  "max": 0,
+  "order": 31,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "f68627f8",
+      "prompt": "buzz cut",
+      "label": "buzz cut"
+    },
+    {
+      "id": "d137d6b3",
+      "prompt": "short hair",
+      "label": "short hair"
+    },
+    {
+      "id": "62146792",
+      "prompt": "chin-length hair",
+      "label": "chin-length hair"
+    },
+    {
+      "id": "60fd7341",
+      "prompt": "shoulder-length hair",
+      "label": "shoulder-length hair"
+    },
+    {
+      "id": "c6b3f69b",
+      "prompt": "long hair",
+      "label": "long hair"
+    },
+    {
+      "id": "598d6083",
+      "prompt": "very long hair",
+      "label": "very long hair"
+    }
+  ]
+}

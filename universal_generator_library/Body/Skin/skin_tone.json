@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "label": "Skin tone",
+  "type": "single",
+  "max": 0,
+  "order": 10,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "ebd93e95",
+      "prompt": "very fair skin",
+      "label": "very fair skin"
+    },
+    {
+      "id": "7bd72729",
+      "prompt": "fair skin",
+      "label": "fair skin"
+    },
+    {
+      "id": "cc1fe3a1",
+      "prompt": "light skin",
+      "label": "light skin"
+    },
+    {
+      "id": "81cc6244",
+      "prompt": "olive skin",
+      "label": "olive skin"
+    },
+    {
+      "id": "1760f899",
+      "prompt": "tan skin",
+      "label": "tan skin"
+    },
+    {
+      "id": "f03a1a68",
+      "prompt": "brown skin",
+      "label": "brown skin"
+    },
+    {
+      "id": "08b5a65d",
+      "prompt": "dark brown skin",
+      "label": "dark brown skin"
+    },
+    {
+      "id": "4d26aec5",
+      "prompt": "deep dark skin",
+      "label": "deep dark skin"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "label": "Eye shape",
+  "type": "single",
+  "max": 0,
+  "order": 21,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "8cc179ab",
+      "prompt": "almond-shaped eyes",
+      "label": "almond-shaped eyes"
+    },
+    {
+      "id": "656da352",
+      "prompt": "round eyes",
+      "label": "round eyes"
+    },
+    {
+      "id": "5a2645c8",
+      "prompt": "hooded eyes",
+      "label": "hooded eyes"
+    },
+    {
+      "id": "98633e06",
+      "prompt": "upturned eyes",
+      "label": "upturned eyes"
+    },
+    {
+      "id": "ddfad122",
+      "prompt": "downturned eyes",
+      "label": "downturned eyes"
+    },
+    {
+      "id": "8958bbda",
+      "prompt": "monolid eyes",
+      "label": "monolid eyes"
+    },
+    {
+      "id": "8f0b98bc",
+      "prompt": "deep-set eyes",
+      "label": "deep-set eyes"
+    }
+  ]
+}

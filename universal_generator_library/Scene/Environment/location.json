@@ -1,0 +1,70 @@
+{
+  "version": 1,
+  "label": "Location",
+  "type": "single",
+  "max": 0,
+  "order": 60,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "50a7be5b",
+      "prompt": "cozy living room",
+      "label": "cozy living room"
+    },
+    {
+      "id": "9581cba4",
+      "prompt": "modern kitchen",
+      "label": "modern kitchen"
+    },
+    {
+      "id": "e8f067bf",
+      "prompt": "city street",
+      "label": "city street"
+    },
+    {
+      "id": "d3e6808e",
+      "prompt": "rooftop terrace",
+      "label": "rooftop terrace"
+    },
+    {
+      "id": "6096b412",
+      "prompt": "forest clearing",
+      "label": "forest clearing"
+    },
+    {
+      "id": "b29ecc7a",
+      "prompt": "sandy beach",
+      "label": "sandy beach"
+    },
+    {
+      "id": "008f7474",
+      "prompt": "mountain meadow",
+      "label": "mountain meadow"
+    },
+    {
+      "id": "4570da73",
+      "prompt": "cafe interior",
+      "label": "cafe interior"
+    },
+    {
+      "id": "4d5bdda9",
+      "prompt": "library",
+      "label": "library"
+    },
+    {
+      "id": "6816206f",
+      "prompt": "photo studio with plain backdrop",
+      "label": "photo studio with plain backdrop"
+    },
+    {
+      "id": "5e9c9f86",
+      "prompt": "old town square",
+      "label": "old town square"
+    },
+    {
+      "id": "70b18d7c",
+      "prompt": "snowy village",
+      "label": "snowy village"
+    }
+  ]
+}

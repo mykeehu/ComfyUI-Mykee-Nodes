@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "label": "Medium",
+  "type": "single",
+  "max": 0,
+  "order": 90,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "586ffc47",
+      "prompt": "photograph",
+      "label": "photograph"
+    },
+    {
+      "id": "f0829c23",
+      "prompt": "cinematic film still",
+      "label": "cinematic film still"
+    },
+    {
+      "id": "14d1f573",
+      "prompt": "35mm film photo",
+      "label": "35mm film photo"
+    },
+    {
+      "id": "9b3cbb90",
+      "prompt": "digital painting",
+      "label": "digital painting"
+    },
+    {
+      "id": "a4a312cc",
+      "prompt": "oil painting",
+      "label": "oil painting"
+    },
+    {
+      "id": "b3ab1d0f",
+      "prompt": "watercolor illustration",
+      "label": "watercolor illustration"
+    },
+    {
+      "id": "d8ee3b82",
+      "prompt": "anime illustration",
+      "label": "anime illustration"
+    },
+    {
+      "id": "a9712bdc",
+      "prompt": "3D render",
+      "label": "3D render"
+    },
+    {
+      "id": "d1ef0abb",
+      "prompt": "pencil sketch",
+      "label": "pencil sketch"
+    }
+  ]
+}

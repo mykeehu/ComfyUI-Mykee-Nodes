@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "label": "Hair style",
+  "type": "multi",
+  "max": 2,
+  "order": 32,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "790f2f3a",
+      "prompt": "straight hair",
+      "label": "straight hair"
+    },
+    {
+      "id": "752d0ad5",
+      "prompt": "wavy hair",
+      "label": "wavy hair"
+    },
+    {
+      "id": "ac90cf55",
+      "prompt": "curly hair",
+      "label": "curly hair"
+    },
+    {
+      "id": "34f72752",
+      "prompt": "coily hair",
+      "label": "coily hair"
+    },
+    {
+      "id": "6d512e59",
+      "prompt": "ponytail",
+      "label": "ponytail"
+    },
+    {
+      "id": "978a4df1",
+      "prompt": "high bun",
+      "label": "high bun"
+    },
+    {
+      "id": "aecce884",
+      "prompt": "messy bun",
+      "label": "messy bun"
+    },
+    {
+      "id": "11814949",
+      "prompt": "braided hair",
+      "label": "braided hair"
+    },
+    {
+      "id": "96cdb270",
+      "prompt": "side part",
+      "label": "side part"
+    },
+    {
+      "id": "1daa3679",
+      "prompt": "bangs",
+      "label": "bangs"
+    },
+    {
+      "id": "6018f111",
+      "prompt": "slicked back hair",
+      "label": "slicked back hair"
+    }
+  ]
+}

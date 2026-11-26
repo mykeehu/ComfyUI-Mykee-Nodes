@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Lips",
+  "type": "single",
+  "max": 0,
+  "order": 23,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "2084c6ed",
+      "prompt": "full lips",
+      "label": "full lips"
+    },
+    {
+      "id": "82d99a06",
+      "prompt": "thin lips",
+      "label": "thin lips"
+    },
+    {
+      "id": "62a5625b",
+      "prompt": "heart-shaped lips",
+      "label": "heart-shaped lips"
+    },
+    {
+      "id": "97bc09a3",
+      "prompt": "wide lips",
+      "label": "wide lips"
+    },
+    {
+      "id": "7d24f876",
+      "prompt": "small lips",
+      "label": "small lips"
+    },
+    {
+      "id": "07464d4b",
+      "prompt": "glossy lips",
+      "label": "glossy lips"
+    }
+  ]
+}

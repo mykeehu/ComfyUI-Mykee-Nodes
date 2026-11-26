@@ -1,0 +1,60 @@
+{
+  "version": 1,
+  "label": "Action",
+  "type": "multi",
+  "max": 2,
+  "order": 3,
+  "scope": "subject",
+  "items": [
+    {
+      "id": "49d53f36",
+      "prompt": "holding a book",
+      "label": "holding a book"
+    },
+    {
+      "id": "90eb7ff0",
+      "prompt": "reading",
+      "label": "reading"
+    },
+    {
+      "id": "826214a0",
+      "prompt": "looking at the camera",
+      "label": "looking at the camera"
+    },
+    {
+      "id": "ec5271f9",
+      "prompt": "looking away",
+      "label": "looking away"
+    },
+    {
+      "id": "e1257e52",
+      "prompt": "talking",
+      "label": "talking"
+    },
+    {
+      "id": "188ccdc4",
+      "prompt": "laughing",
+      "label": "laughing"
+    },
+    {
+      "id": "127cd973",
+      "prompt": "drinking from a cup",
+      "label": "drinking from a cup"
+    },
+    {
+      "id": "1a8efa77",
+      "prompt": "holding hands",
+      "label": "holding hands"
+    },
+    {
+      "id": "8a67c889",
+      "prompt": "waving",
+      "label": "waving"
+    },
+    {
+      "id": "1bed784c",
+      "prompt": "using a phone",
+      "label": "using a phone"
+    }
+  ]
+}

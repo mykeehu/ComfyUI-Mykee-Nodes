@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "label": "Shot type",
+  "type": "single",
+  "max": 0,
+  "order": 80,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "aa7a3a5a",
+      "prompt": "extreme close-up",
+      "label": "extreme close-up"
+    },
+    {
+      "id": "6b3cf8dc",
+      "prompt": "close-up portrait",
+      "label": "close-up portrait"
+    },
+    {
+      "id": "c4384c02",
+      "prompt": "head and shoulders portrait",
+      "label": "head and shoulders portrait"
+    },
+    {
+      "id": "3971edd2",
+      "prompt": "medium shot",
+      "label": "medium shot"
+    },
+    {
+      "id": "63eaa285",
+      "prompt": "cowboy shot",
+      "label": "cowboy shot"
+    },
+    {
+      "id": "8aa76f62",
+      "prompt": "full body shot",
+      "label": "full body shot"
+    },
+    {
+      "id": "0559a097",
+      "prompt": "wide shot",
+      "label": "wide shot"
+    }
+  ]
+}

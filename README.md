@@ -118,6 +118,7 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee Prompt Advanced](documents/prompt-advanced.md) | LLM chat/instruction node with editable system prompt and optional image input. |
 | [Mykee Prompt Advanced - Prompt Modifier](documents/prompt-modifier.md) | Rewrites only the details an edit instruction addresses. |
 | [Mykee Prompt Advanced Ultimate](documents/prompt-advanced-ultimate.md) | Two-stage version: describe first, then answer/edit from the text. |
+| [Mykee Universal Generator](documents/universal-generator.md) | Builds a prompt from a library of attribute lists (JSON files in category folders): pick, randomize, edit, save recipes; tag list or LLM-written description. |
 | [Mykee JSON Captioner](documents/json-captioner.md) | Captions images as MOSS-Image layout JSON (bounding boxes) or plain captions. |
 | [Mykee JSON BBOX Resizer](documents/json-bbox-resizer.md) | Re-maps the boxes of a MOSS layout JSON from one canvas size to another. |
 | [Mykee Text Switch/Batch](documents/text-switch-batch.md) | Up to 49 text fields with switch or batch output. |

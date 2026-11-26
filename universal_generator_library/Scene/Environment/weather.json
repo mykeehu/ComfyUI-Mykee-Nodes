@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "label": "Weather",
+  "type": "single",
+  "max": 0,
+  "order": 61,
+  "scope": "scene",
+  "items": [
+    {
+      "id": "3377cf8b",
+      "prompt": "clear sky",
+      "label": "clear sky"
+    },
+    {
+      "id": "8daf933a",
+      "prompt": "overcast sky",
+      "label": "overcast sky"
+    },
+    {
+      "id": "48669e6a",
+      "prompt": "light rain",
+      "label": "light rain"
+    },
+    {
+      "id": "17d691b9",
+      "prompt": "fog",
+      "label": "fog"
+    },
+    {
+      "id": "aef6af67",
+      "prompt": "snowfall",
+      "label": "snowfall"
+    },
+    {
+      "id": "09d5c7d6",
+      "prompt": "stormy clouds",
+      "label": "stormy clouds"
+    }
+  ]
+}
