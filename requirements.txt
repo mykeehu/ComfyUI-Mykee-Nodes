@@ -145,3 +145,10 @@ resemble-enhance
 # public files - if that happens, wait a while and retry, or download by
 # hand from the URL in the error message.
 # and place it at ComfyUI/models/stylegan/vgg16.pt yourself.
+
+# For the Face Refine nodes' edge align (mykee_face_mesh.py):
+# optional face mesh (mediapipe). Install WITHOUT its dependencies,
+# because mediapipe pulls in opencv-contrib-python, which clashes with the
+# opencv-python ComfyUI / this pack already uses:
+#   pip install mediapipe --no-deps absl-py flatbuffers
+# The nodes work without it (ellipse blend instead of the outline).

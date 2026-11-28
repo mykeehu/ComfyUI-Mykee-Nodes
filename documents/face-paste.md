@@ -36,6 +36,21 @@ by the image border, tilted heads and moving faces all land correctly.
   original face's pixel-level Laplacian sharpness. That measure is dominated
   by pixel-level grain, so it can reject refinements that look sharper to the
   eye; use it only if a clearly blurry refinement slipped through.
+- **edge_align** - on by default; needs the face mesh (the `mediapipe`
+  package; the Face Landmarker model, Apache-2.0, is downloaded into
+  `models/annotators` once). Refining often moves the face outline a little
+  (jaw, cheeks, hairline); blending the refined face over the original then
+  shows two outlines - a ghosted or broken face edge. With `edge_align` both
+  crops get the 478-point mesh, the original's surroundings (hair, neck,
+  background next to the face) are moved smoothly to the refined outline
+  (the mesh points' moves smoothed over the mesh, then a thin-plate spline
+  through them, fading out with no step beyond the outline), and the blend
+  mask follows the refined face's outline instead of a fixed ellipse
+  (`mask_feather_pct` still sets its softness; `mask_grow_pct` and
+  `mask_forehead_pct` only apply to the ellipse). In a video the landmarks
+  are averaged over neighbouring frames of each track, so the alignment does
+  not flicker. Crops without a mesh on both sides (profiles, no mediapipe)
+  fall back to the ellipse; the summary says how many were aligned.
 
 ## Outputs
 

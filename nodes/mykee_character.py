@@ -357,6 +357,43 @@ def _filter_small_faces(faces, min_face_size_pct):
     return faces[keep_mask]
 
 
+def _dedupe_face_rows(faces):
+    """YuNet's own NMS lets a second, partly overlapping box of the SAME face
+    through now and then - typically on close-ups, one box on the face plus a
+    larger one shifted up over forehead / hair. A lower-scoring box is dropped
+    when (a) most of its smaller side lies inside a higher-scoring one, or
+    (b) its eye-midpoint or nose landmark falls inside a higher-scoring box:
+    two different faces never have their eyes inside each other's box.
+    (Same rule as the Face Refine nodes use.)"""
+    if faces is None or len(faces) < 2:
+        return faces
+    order = np.argsort(-faces[:, 14])
+    keep = []
+
+    def inside(b, px, py):
+        return b[0] <= px <= b[0] + b[2] and b[1] <= py <= b[1] + b[3]
+
+    for i in order:
+        a = faces[i]
+        dup = False
+        for k in keep:
+            b = faces[k]
+            ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+            iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+            inter = ix * iy
+            if inter / max(1e-9, min(a[2] * a[3], b[2] * b[3])) > 0.6:
+                dup = True
+                break
+            if inter > 0.0:
+                eye_mid = ((a[4] + a[6]) * 0.5, (a[5] + a[7]) * 0.5)
+                if inside(b, a[8], a[9]) or inside(b, eye_mid[0], eye_mid[1]):
+                    dup = True
+                    break
+        if not dup:
+            keep.append(i)
+    return faces[sorted(keep)]
+
+
 def _detect_faces(bgr, yunet_path, score_threshold, min_face_size_pct=0.0):
     h, w = bgr.shape[:2]
     detector = cv2.FaceDetectorYN_create(yunet_path, "", (w, h), score_threshold, 0.3, 5000)
@@ -374,6 +411,7 @@ def _detect_faces(bgr, yunet_path, score_threshold, min_face_size_pct=0.0):
         finite_mask = np.isfinite(faces).all(axis=1)
         if not finite_mask.all():
             faces = faces[finite_mask] if finite_mask.any() else faces[:0]
+        faces = _dedupe_face_rows(faces)
     return faces
 
 

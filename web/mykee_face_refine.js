@@ -44,6 +44,10 @@ app.registerExtension({
                 const ret = configured ? configured.apply(this, arguments) : undefined;
                 setTimeout(() => {
                     hideNumPeople(this);
+                    // height follows the content (a saved height may be too
+                    // small for widgets added since), the width is kept
+                    const cs = this.computeSize();
+                    this.setSize([Math.max(this.size[0], cs[0]), cs[1]]);
                     app.graph.setDirtyCanvas(true, true);
                 }, 50);
                 return ret;

@@ -1183,6 +1183,88 @@ def _label(bgr, text):
     return out
 
 
+# ---------------------------------------------------------------------------
+# Edge alignment: the original
+# surroundings follow the refined face's outline, so no second outline shows.
+# ---------------------------------------------------------------------------
+
+EDGE_TIME_RADIUS = 2      # landmarks are averaged over +-this many neighbouring frames of a track
+EDGE_FADE = 0.06          # the alignment fades out over about 2.5x .. 4.5x this (x face width) beyond the outline
+
+
+def _edge_meshes(items, refined, idxs, size, get_bgr, edge_fill):
+    """Face meshes of the original and the refined crop for every item that
+    has both, smoothed over time within each track. Returns ({item: (orig
+    points, refined points)}, note)."""
+    from .mykee_face_mesh import _FaceMesh
+    mesh = _FaceMesh("mediapipe")
+    if not mesh.ok:
+        return {}, f"Edge align off: face mesh not available ({mesh.error or 'mediapipe missing'}) - ellipse blend used."
+    raw = {}
+    for j in idxs:
+        it = items[j]
+        o_crop = _bgr_to_rgb_f32(_warp_to_crop(get_bgr(it["frame"]), it["M"], size, edge_fill))
+        row = _row_in_crop(it["row"], it["M"])
+        po = mesh.landmarks(o_crop, row)
+        pr = mesh.landmarks(refined[j], row)
+        if po is not None and pr is not None:
+            raw[j] = (po[:, :2].astype(np.float32), pr[:, :2].astype(np.float32))
+    # time smoothing per track (crops are stabilised by the track windows, so
+    # crop coordinates of neighbouring frames are comparable)
+    by_track = {}
+    for j in raw:
+        by_track.setdefault(items[j]["track"], []).append(j)
+    out = {}
+    for tj in by_track.values():
+        tj.sort(key=lambda k: items[k]["frame"])
+        for n, j in enumerate(tj):
+            near = [tj[m] for m in range(max(0, n - EDGE_TIME_RADIUS), min(len(tj), n + EDGE_TIME_RADIUS + 1))
+                    if abs(items[tj[m]]["frame"] - items[j]["frame"]) <= EDGE_TIME_RADIUS]
+            out[j] = (np.mean([raw[k][0] for k in near], 0), np.mean([raw[k][1] for k in near], 0))
+    missing = len(idxs) - len(out)
+    note = f"Edge align: {missing} crop(s) without a face mesh on both sides - ellipse blend used there." if missing else ""
+    return out, note
+
+
+def _oval_hull(pts, size):
+    from .mykee_face_mesh import MESH_FALLBACK
+    idx = [i for i in MESH_FALLBACK["FACE_LANDMARKS_FACE_OVAL"] if i < len(pts)]
+    m = np.zeros((size, size), np.uint8)
+    cv2.fillConvexPoly(m, cv2.convexHull(np.round(pts[idx]).astype(np.int32)), 1)
+    return m.astype(np.float32)
+
+
+def _outline_mask(pr, size, feather_pct):
+    """Blend mask from the refined face's outline: 1 on the face, falling off
+    smoothly outside it (no step at the outline); feather_pct is the softness
+    as a percentage of the crop size, as for the ellipse."""
+    from .mykee_face_mesh import _soft_outside
+    sigma = max(0.5, size * feather_pct / 100.0 / 2.0) / 2.5
+    return np.clip(_soft_outside(_oval_hull(pr, size), sigma), 0.0, 1.0)
+
+
+def _aligned_crop(o_crop, ref, po, pr, mask):
+    """The original crop with its surroundings moved to the refined outline,
+    with the refined face blended in; plus the mask to paste it with (the
+    face mask, widened to where the alignment really moved something)."""
+    from .mykee_face_mesh import _smooth_over_mesh, _tps_field, _soft_outside
+    size = o_crop.shape[0]
+    fw = float(np.ptp(pr[:, 0])) or 64.0
+    disp = _smooth_over_mesh(po, pr - po, fw * 0.1)
+    dst = po + disp
+    hull = np.maximum(_oval_hull(po, size), _oval_hull(dst, size))
+    fade = _soft_outside(hull, fw * EDGE_FADE)
+    fx, fy = _tps_field(dst, (po - dst).astype(np.float64), size, size)
+    fx, fy = (fx * fade).astype(np.float32), (fy * fade).astype(np.float32)
+    mx, my = np.meshgrid(np.arange(size, dtype=np.float32), np.arange(size, dtype=np.float32))
+    warped = cv2.remap(o_crop, mx + fx, my + fy, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT)
+    a = mask[..., None]
+    combined = (warped * (1.0 - a) + ref * a).astype(np.float32)
+    moved = np.clip(np.hypot(fx, fy), 0.0, 1.0)            # 1 where a pixel moved by a pixel or more
+    moved = cv2.GaussianBlur(moved, (0, 0), max(1.0, fw * 0.02))
+    return combined, np.clip(np.maximum(mask, moved), 0.0, 1.0)
+
+
 class MykeeFacePaste:
     """
     Blends refined face crops back into the original image / video frames.
@@ -1237,6 +1319,9 @@ class MykeeFacePaste:
                 "default": 0.0, "min": 0.0, "max": 3.0, "step": 0.05,
                 "tooltip": "EXPERIMENTAL, off by default. in_place guard only: reject a track when the pasted face has less than this fraction of the original face's pixel-level Laplacian sharpness. That measure is dominated by pixel-level grain, so it can reject refinements that look sharper to the eye; leave it at 0 unless you have seen a clearly blurry refinement slip through.",
             }),
+            "edge_align": ("BOOLEAN", {
+                "default": True,
+                "tooltip": "Needs the face mesh (mediapipe; the model is downloaded into models/annotators once). The refined face's outline (jaw, cheeks, hairline) often moves a little; blending it over the original then shows two outlines (a ghosted or broken face edge). With this on, the original's surroundings are moved smoothly to the refined outline first (thin-plate spline over the 478 mesh points, fading out into hair and neck), and the blend mask follows the face outline instead of a fixed ellipse. Landmarks are smoothed over time per track so a video does not flicker. Falls back to the ellipse when no mesh is found.",            }),
         }
         optional = {
             "refined_all": ("IMAGE", {
@@ -1277,7 +1362,7 @@ class MykeeFacePaste:
     def run(self, images, tracks, num_people, model_file_yunet, model_file_sface, mask_grow_pct,
             mask_forehead_pct, mask_feather_pct, color_match, color_strength, identity_guard,
             guard_margin, guard_samples, score_threshold, frame_pick,
-            guard_measure="in_place", min_detail_ratio=0.0, **kwargs):
+            guard_measure="in_place", min_detail_ratio=0.0, edge_align=True, **kwargs):
         _require_cv2()
         images_t = images[0] if len(images) == 1 else torch.cat(list(images), dim=0)
         tr = _first(tracks)
@@ -1291,6 +1376,7 @@ class MykeeFacePaste:
         det_thr = float(_first(score_threshold))
         in_place = _first(guard_measure) == "in_place"
         min_detail = float(_first(min_detail_ratio))
+        edge_on = bool(_first(edge_align))
         frame_pick = _first(frame_pick)
         yunet_path = _resolve_model_path(_first(model_file_yunet))
         sface_path = _resolve_model_path(_first(model_file_sface))
@@ -1458,21 +1544,39 @@ class MykeeFacePaste:
         for idx in refined:
             if items[idx]["track"] in accepted_tracks:
                 by_frame.setdefault(items[idx]["frame"], []).append(idx)
-        pasted = 0
+        meshes = {}
+        if edge_on and by_frame:
+            meshes, note = _edge_meshes(items, refined, [j for js in by_frame.values() for j in js], size,
+                                        get_bgr, edge_fill)
+            if note:
+                lines.append(note)
+        pasted = aligned = 0
         for f, idxs in by_frame.items():
             frame = np.ascontiguousarray(out[f][..., :3].numpy())
             for j in idxs:
                 it = items[j]
-                mask = _ellipse_mask(size, it["geom"], grow, fore, feather)
                 ref = refined[j]
-                if color_match != "off" and color_strength > 0:
+                o_crop = None
+                if (color_match != "off" and color_strength > 0) or j in meshes:
                     # the original (unmodified) frame is the colour reference
                     o_crop = _bgr_to_rgb_f32(_warp_to_crop(get_bgr(f), it["M"], size, edge_fill))
-                    ref = _match_color(ref, o_crop, mask, color_strength)
-                _paste_crop(frame, ref, mask, it["M"], size)
+                if j in meshes:
+                    po, pr = meshes[j]
+                    mask = _outline_mask(pr, size, feather)
+                    if color_match != "off" and color_strength > 0:
+                        ref = _match_color(ref, o_crop, mask, color_strength)
+                    combined, paste_mask = _aligned_crop(o_crop, ref, po, pr, mask)
+                    _paste_crop(frame, combined, paste_mask, it["M"], size)
+                    aligned += 1
+                else:
+                    mask = _ellipse_mask(size, it["geom"], grow, fore, feather)
+                    if color_match != "off" and color_strength > 0:
+                        ref = _match_color(ref, o_crop, mask, color_strength)
+                    _paste_crop(frame, ref, mask, it["M"], size)
                 pasted += 1
             out[f][..., :3] = torch.from_numpy(frame)
-        lines.insert(0, f"{pasted} face crop(s) pasted into {len(by_frame)} frame(s).")
+        lines.insert(0, f"{pasted} face crop(s) pasted into {len(by_frame)} frame(s)"
+                        + (f", {aligned} with the face edge aligned." if edge_on else "."))
 
         if montage:
             m_t = torch.from_numpy(np.stack(montage))

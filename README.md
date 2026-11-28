@@ -92,6 +92,10 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 | [Mykee StyleGAN Vector Preparation](documents/stylegan-vector-preparation.md) | Builds and previews a new direction vector (writes nothing to disk). |
 | [Mykee StyleGAN Vector Save](documents/stylegan-vector-save.md) | Saves the prepared vector and its parameters. |
 
+### Edit
+
+The Mykee Universal Edit node (training-free edit and reference composition with any image model) now lives in its own package: **ComfyUI-Mykee-UniversalEdit**.
+
 ### Image, latent & conditioning
 
 | Node | Description |
@@ -144,6 +148,8 @@ Overview, folder layout, layer reference and caveats: [StyleGAN Facegenerator](d
 ComfyUI itself has no authentication, so do not expose it to untrusted networks (`--listen`, port forwarding, hosted setups) without a reverse proxy / auth in front of it.
 
 The Prompt Template, Model Template and Recipe nodes talk to small HTTP routes (`/mykee/prompt_templates/*`, `/mykee/model_templates/*`, `/mykee/recipes/*`). The Meme Maker has two routes of its own (`/mykee/meme/fonts`, `/mykee/meme/preview`); neither takes a file or folder name - fonts are only read from the system's own font folders, and the workflow only stores a font family name. The Video Titler has three (`/mykee/titler/probe`, `/mykee/titler/parse`, `/mykee/titler/preview`): only `probe` takes a file name, and that file must resolve to a video inside ComfyUI's `input`, `output` or `temp` folder (the files ComfyUI's own `/view` route already serves) - it returns the frame rate, size and length, nothing else. The Video Titler saves only into ComfyUI's `output` folder, under a cleaned bare file name. Their `custom_path` folder is only accepted if it lies inside ComfyUI's `user`, `input` or `output` folder, or inside a folder listed in `allowed_template_dirs.txt` (one path per line) or in the `MYKEE_TEMPLATE_ROOTS` environment variable. A save never overwrites a JSON file that is not a template of the same kind. The Recipe routes are stricter still: symbolic links in the recipe folder are refused, files over 5 MB are refused, and everything read from or written to a recipe file is validated against a strict schema.
+
+The Face Refine edge align downloads the MediaPipe face landmarker model from one fixed Google URL and checks it before it is saved; it takes no file or folder name.
 
 **Third-party code and model files (your responsibility):**
 
